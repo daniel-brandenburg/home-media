@@ -1,0 +1,16 @@
+[Unit]
+Description=Home Media Stack
+After=network-online.target srv-media.mount
+Wants=network-online.target
+Requires=srv-media.mount
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/srv/containers
+ExecStart=/usr/bin/podman compose up -d
+ExecStop=/usr/bin/podman compose down
+TimeoutStartSec=300
+
+[Install]
+WantedBy=default.target

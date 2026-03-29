@@ -1,0 +1,2 @@
+# Local configuration — never commit this
+containers/.env

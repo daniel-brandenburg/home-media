@@ -1,0 +1,41 @@
+{
+    auto_https off
+}
+
+# The Dashboard
+http://dash.home {
+    reverse_proxy dashy:8080
+}
+
+# Media Apps
+http://jellyfin.home {
+    reverse_proxy jellyfin:8096
+}
+
+http://qbit.home {
+    reverse_proxy qbittorrent:8080
+}
+
+http://sonarr.home {
+    reverse_proxy sonarr:8989
+}
+
+http://prowlarr.home {
+    reverse_proxy prowlarr:9696
+}
+
+http://radarr.home {
+    reverse_proxy radarr:7878
+}
+
+http://audiobooks.home {
+    reverse_proxy audiobookshelf:80
+}
+
+http://listenarr.home {
+    reverse_proxy listenarr:4545
+}
+
+http://bitmagnet.home {
+    reverse_proxy bitmagnet:3333
+}

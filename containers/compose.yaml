@@ -1,0 +1,196 @@
+services:
+  # --- INFRASTRUCTURE ---
+  caddy:
+    image: caddy:latest
+    container_name: caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /srv/containers/caddy/Caddyfile:/etc/caddy/Caddyfile:Z
+      - /srv/containers/caddy/data:/data:Z
+      - /srv/containers/caddy/config:/config:Z
+    networks:
+      - media_net
+    restart: unless-stopped
+
+
+  dashy:
+    image: ghcr.io/lissy93/dashy:latest
+    container_name: dashy
+    ports:
+      - "8081:8080"
+    volumes:
+      - /srv/containers/dashy/conf.yml:/app/user-data/conf.yml:Z
+    networks:
+      - media_net
+    restart: unless-stopped
+
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+    ports:
+      - "9696:9696"
+    volumes:
+      - /srv/containers/prowlarr:/config:Z
+    networks:
+      - media_net
+    restart: unless-stopped
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    environment:
+      - LOG_LEVEL=info
+      - TZ=${TZ}
+    # No host port — internal only; Prowlarr reaches it at http://flaresolverr:8191
+    networks:
+      - media_net
+    restart: unless-stopped
+
+  bitmagnet-postgres:
+    image: postgres:16-alpine
+    container_name: bitmagnet-postgres
+    environment:
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=bitmagnet
+      - PGUSER=postgres
+    volumes:
+      - /srv/containers/bitmagnet/postgres:/var/lib/postgresql/data:Z
+    shm_size: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready"]
+      start_period: 20s
+      interval: 10s
+    networks:
+      - media_net
+    restart: unless-stopped
+
+  bitmagnet:
+    image: ghcr.io/bitmagnet-io/bitmagnet:latest
+    container_name: bitmagnet
+    environment:
+      - POSTGRES_HOST=bitmagnet-postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    ports:
+      - "3333:3333"
+      - "3334:3334/tcp"
+      - "3334:3334/udp"
+    volumes:
+      - /srv/containers/bitmagnet/config:/root/.config/bitmagnet:Z
+    command:
+      - worker
+      - run
+      - --keys=http_server
+      - --keys=queue_server
+      - --keys=dht_crawler
+    depends_on:
+      bitmagnet-postgres:
+        condition: service_healthy
+    networks:
+      - media_net
+    restart: unless-stopped
+
+  # --- MEDIA SUITE ---
+  audiobookshelf:
+    image: ghcr.io/advplyr/audiobookshelf:latest
+    container_name: audiobookshelf
+    environment:
+      - TZ=${TZ}
+    ports:
+      - "13378:80"
+    volumes:
+      - /srv/containers/audiobookshelf/config:/config:Z
+      - /srv/containers/audiobookshelf/metadata:/metadata:Z
+      - /srv/media/audiobooks:/audiobooks # NO :Z (exFAT drive)
+    networks:
+      - media_net
+    restart: unless-stopped
+
+  jellyfin:
+    image: lscr.io/linuxserver/jellyfin:latest
+    container_name: jellyfin
+    ports:
+      - "8096:8096"
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+    volumes:
+      - /srv/containers/jellyfin:/config:Z
+      - /srv/media:/data # NO :Z (exFAT drive)
+    networks:
+      - media_net
+    restart: unless-stopped
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - WEBUI_PORT=8080
+    volumes:
+      - /srv/containers/qbittorrent:/config:Z
+      - /srv/media/downloads:/downloads # NO :Z
+      - /srv/containers/qbittorrent/custom-cont-init.d:/custom-cont-init.d:Z
+    ports:
+      - "8080:8080"
+      - "6881:6881"
+      - "6881:6881/udp"
+    networks:
+      - media_net
+    restart: unless-stopped
+
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+    ports:
+      - "8989:8989"
+    volumes:
+      - /srv/containers/sonarr:/config:Z
+      - /srv/media:/data # NO :Z
+    networks:
+      - media_net
+    restart: unless-stopped
+
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+    ports:
+      - "7878:7878"
+    volumes:
+      - /srv/containers/radarr:/config:Z
+      - /srv/media:/data # NO :Z
+    networks:
+      - media_net
+    restart: unless-stopped
+
+  listenarr:
+    image: ghcr.io/listenarrs/listenarr:canary
+    container_name: listenarr
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - UMASK=022
+    ports:
+      - "4545:4545"
+    volumes:
+      - /srv/containers/listenarr:/app/config:Z
+      - /srv/media/audiobooks:/audiobooks # NO :Z (exFAT drive)
+      - /srv/media/downloads:/downloads # NO :Z (exFAT drive)
+    networks:
+      - media_net
+    restart: unless-stopped
+
+networks:
+  media_net:
+    driver: bridge

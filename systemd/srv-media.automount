@@ -1,0 +1,8 @@
+[Unit]
+Description=Automount for External Kingston Drive
+
+[Automount]
+Where=/srv/media
+
+[Install]
+WantedBy=multi-user.target

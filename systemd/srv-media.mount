@@ -1,0 +1,15 @@
+[Unit]
+Description=Mount External Media Drive to /srv/media
+After=network.target
+
+[Mount]
+# Replace with the UUID of your exFAT drive.
+# Find it with: blkid /dev/sdX   (e.g. blkid /dev/sda1)
+What=/dev/disk/by-uuid/XXXX-XXXX
+Where=/srv/media
+Type=exfat
+# uid/gid must match the user that runs the containers (check with: id)
+Options=defaults,uid=1000,gid=1000,nofail,dmask=000,fmask=000,context="system_u:object_r:container_file_t:s0"
+
+[Install]
+WantedBy=multi-user.target

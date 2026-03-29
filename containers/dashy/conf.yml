@@ -1,0 +1,86 @@
+pageInfo:
+  title: Home Media Server
+  description: Welcome home, Captain.
+
+appConfig:
+  theme: dark
+  layout: grid
+  iconSize: large
+  statusCheck: true
+  statusCheckInterval: 60
+  defaultOpeningMethod: newtab
+  hideComponents:
+    hideSettings: false
+    hideFooter: true
+
+sections:
+  - name: Media
+    icon: si-jellyfin
+    displayData:
+      cols: 2
+    items:
+      - title: Jellyfin
+        description: Stream your media library
+        url: http://${SERVER_IP}:8096
+        icon: si-jellyfin
+        statusCheck: true
+        statusCheckUrl: http://jellyfin:8096
+
+      - title: Audiobookshelf
+        description: Audiobook library and player
+        url: http://${SERVER_IP}:13378
+        icon: si-audiobookshelf
+        statusCheck: true
+        statusCheckUrl: http://audiobookshelf:80
+
+  - name: Automation
+    icon: si-sonarr
+    displayData:
+      cols: 3
+    items:
+      - title: Sonarr
+        description: TV series management
+        url: http://${SERVER_IP}:8989
+        icon: si-sonarr
+        statusCheck: true
+        statusCheckUrl: http://sonarr:8989
+
+      - title: Radarr
+        description: Movie management
+        url: http://${SERVER_IP}:7878
+        icon: si-radarr
+        statusCheck: true
+        statusCheckUrl: http://radarr:7878
+
+      - title: Listenarr
+        description: Audiobook download management
+        url: http://${SERVER_IP}:4545
+        icon: si-audiobookshelf
+        statusCheck: true
+        statusCheckUrl: http://listenarr:4545
+
+  - name: Network
+    icon: si-qbittorrent
+    displayData:
+      cols: 2
+    items:
+      - title: qBittorrent
+        description: Torrent download client
+        url: http://${SERVER_IP}:8080
+        icon: si-qbittorrent
+        statusCheck: true
+        statusCheckUrl: http://qbittorrent:8080
+
+      - title: Prowlarr
+        description: Indexer management
+        url: http://prowlarr.home
+        icon: si-prowlarr
+        statusCheck: true
+        statusCheckUrl: http://prowlarr:9696
+
+      - title: Bitmagnet
+        description: DHT crawler & torrent search
+        url: http://${SERVER_IP}:3333
+        icon: si-bitmagnet
+        statusCheck: true
+        statusCheckUrl: http://bitmagnet:3333
