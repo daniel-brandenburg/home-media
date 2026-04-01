@@ -18,6 +18,7 @@ source "$ENV_FILE"
 
 # ─── Derived service URLs ──────────────────────────────────────────────────
 QBIT_URL="http://${SERVER_IP}:8080"
+QBIT_SERVICE_HOST="host.containers.internal"
 SONARR_URL="http://${SERVER_IP}:8989"
 RADARR_URL="http://${SERVER_IP}:7878"
 PROWLARR_URL="http://${SERVER_IP}:9696"
@@ -81,7 +82,7 @@ step "Checking API keys"
 [[ -n "$SONARR_API" ]]   || { fetch_api_key_xml  SONARR_API   "${REMOTE_DIR}/sonarr/config.xml";   [[ -n "$SONARR_API" ]]   || KEYS_MISSING=1; }
 [[ -n "$RADARR_API" ]]   || { fetch_api_key_xml  RADARR_API   "${REMOTE_DIR}/radarr/config.xml";   [[ -n "$RADARR_API" ]]   || KEYS_MISSING=1; }
 [[ -n "$PROWLARR_API" ]] || { fetch_api_key_xml  PROWLARR_API "${REMOTE_DIR}/prowlarr/config.xml"; [[ -n "$PROWLARR_API" ]] || KEYS_MISSING=1; }
-[[ -n "$LISTENARR_API" ]] || { fetch_api_key_json LISTENARR_API "${REMOTE_DIR}/listenarr/appsettings/appsettings.json"; [[ -n "$LISTENARR_API" ]] || KEYS_MISSING=1; }
+[[ -n "$LISTENARR_API" ]] || { fetch_api_key_json LISTENARR_API "${REMOTE_DIR}/listenarr/config.json"; [[ -n "$LISTENARR_API" ]] || KEYS_MISSING=1; }
 
 if [[ "$KEYS_MISSING" -eq 1 ]]; then
   red "One or more API keys could not be resolved. Fill them in .env and re-run."
@@ -208,17 +209,38 @@ fi
 
 step "Sonarr: adding remote path mapping (qBittorrent /downloads -> /data/downloads)"
 EXISTING_RPM=$(sonarr GET "remotepathmapping")
-if echo "$EXISTING_RPM" | jq -e '.[] | select(.host == "qbittorrent")' &>/dev/null; then
+if echo "$EXISTING_RPM" | jq -e --arg host "$QBIT_SERVICE_HOST" '.[] | select(.host == $host)' &>/dev/null; then
   green "  Remote path mapping already exists"
+elif echo "$EXISTING_RPM" | jq -e '.[] | select(.host == "qbittorrent")' &>/dev/null; then
+  MAPPING_ID=$(echo "$EXISTING_RPM" | jq -r '.[] | select(.host == "qbittorrent") | .id' | head -1)
+  sonarr PUT "remotepathmapping/${MAPPING_ID}" "$(echo "$EXISTING_RPM" | jq -c --argjson id "$MAPPING_ID" --arg host "$QBIT_SERVICE_HOST" '.[] | select(.id == $id) | .host = $host | .remotePath = "/downloads/" | .localPath = "/data/downloads/"')" > /dev/null
+  green "  Updated remote path mapping host -> ${QBIT_SERVICE_HOST}"
 else
-  sonarr POST "remotepathmapping" '{"host":"qbittorrent","remotePath":"/downloads/","localPath":"/data/downloads/"}' \
+  sonarr POST "remotepathmapping" "{\"host\":\"${QBIT_SERVICE_HOST}\",\"remotePath\":\"/downloads/\",\"localPath\":\"/data/downloads/\"}" \
     | jq -r '"  Mapped: " + .remotePath + " -> " + .localPath'
 fi
 
 step "Sonarr: adding qBittorrent as download client"
 EXISTING_DC=$(sonarr GET "downloadclient")
 if echo "$EXISTING_DC" | jq -e '.[] | select(.name == "qBittorrent")' &>/dev/null; then
-  green "  Download client qBittorrent already exists"
+  SONARR_DC_ID=$(echo "$EXISTING_DC" | jq -r '.[] | select(.name == "qBittorrent") | .id' | head -1)
+  UPDATED_DC=$(echo "$EXISTING_DC" | jq -c --argjson id "$SONARR_DC_ID" --arg host "$QBIT_SERVICE_HOST" --arg user "$QBIT_USER" --arg pass "$QBIT_PASS" '
+    def set_field($name; $value):
+      if any(.[]; .name == $name) then
+        map(if .name == $name then .value = $value else . end)
+      else
+        . + [{"name": $name, "value": $value}]
+      end;
+    .[]
+    | select(.id == $id)
+    | .fields |= set_field("host"; $host)
+    | .fields |= set_field("port"; 8080)
+    | .fields |= set_field("username"; $user)
+    | .fields |= set_field("password"; $pass)
+    | .fields |= set_field("tvCategory"; "tv")
+  ')
+  sonarr PUT "downloadclient/${SONARR_DC_ID}" "$UPDATED_DC" > /dev/null
+  green "  Download client qBittorrent already exists (updated host/auth/category)"
 else
   RESULT=$(sonarr POST "downloadclient" "{
     \"name\": \"qBittorrent\",
@@ -228,12 +250,12 @@ else
     \"implementation\": \"QBittorrent\",
     \"configContract\": \"QBittorrentSettings\",
     \"fields\": [
-      {\"name\": \"host\",     \"value\": \"qbittorrent\"},
+      {\"name\": \"host\",     \"value\": \"${QBIT_SERVICE_HOST}\"},
       {\"name\": \"port\",     \"value\": 8080},
       {\"name\": \"username\", \"value\": \"${QBIT_USER}\"},
       {\"name\": \"password\", \"value\": \"${QBIT_PASS}\"},
       {\"name\": \"tvCategory\",        \"value\": \"tv\"},
-      {\"name\": \"recentTvPriority\",  \"value\": 0},
+      {\"name\": \"recentTvPriority\",  \"value\": 1},
       {\"name\": \"olderTvPriority\",   \"value\": 0},
       {\"name\": \"initialState\",      \"value\": 0},
       {\"name\": \"sequentialOrder\",   \"value\": false},
@@ -287,17 +309,38 @@ fi
 
 step "Radarr: adding remote path mapping (qBittorrent /downloads -> /data/downloads)"
 EXISTING_RPM=$(radarr GET "remotepathmapping")
-if echo "$EXISTING_RPM" | jq -e '.[] | select(.host == "qbittorrent")' &>/dev/null; then
+if echo "$EXISTING_RPM" | jq -e --arg host "$QBIT_SERVICE_HOST" '.[] | select(.host == $host)' &>/dev/null; then
   green "  Remote path mapping already exists"
+elif echo "$EXISTING_RPM" | jq -e '.[] | select(.host == "qbittorrent")' &>/dev/null; then
+  MAPPING_ID=$(echo "$EXISTING_RPM" | jq -r '.[] | select(.host == "qbittorrent") | .id' | head -1)
+  radarr PUT "remotepathmapping/${MAPPING_ID}" "$(echo "$EXISTING_RPM" | jq -c --argjson id "$MAPPING_ID" --arg host "$QBIT_SERVICE_HOST" '.[] | select(.id == $id) | .host = $host | .remotePath = "/downloads/" | .localPath = "/data/downloads/"')" > /dev/null
+  green "  Updated remote path mapping host -> ${QBIT_SERVICE_HOST}"
 else
-  radarr POST "remotepathmapping" '{"host":"qbittorrent","remotePath":"/downloads/","localPath":"/data/downloads/"}' \
+  radarr POST "remotepathmapping" "{\"host\":\"${QBIT_SERVICE_HOST}\",\"remotePath\":\"/downloads/\",\"localPath\":\"/data/downloads/\"}" \
     | jq -r '"  Mapped: " + .remotePath + " -> " + .localPath'
 fi
 
 step "Radarr: adding qBittorrent as download client"
 EXISTING_DC=$(radarr GET "downloadclient")
 if echo "$EXISTING_DC" | jq -e '.[] | select(.name == "qBittorrent")' &>/dev/null; then
-  green "  Download client qBittorrent already exists"
+  RADARR_DC_ID=$(echo "$EXISTING_DC" | jq -r '.[] | select(.name == "qBittorrent") | .id' | head -1)
+  UPDATED_DC=$(echo "$EXISTING_DC" | jq -c --argjson id "$RADARR_DC_ID" --arg host "$QBIT_SERVICE_HOST" --arg user "$QBIT_USER" --arg pass "$QBIT_PASS" '
+    def set_field($name; $value):
+      if any(.[]; .name == $name) then
+        map(if .name == $name then .value = $value else . end)
+      else
+        . + [{"name": $name, "value": $value}]
+      end;
+    .[]
+    | select(.id == $id)
+    | .fields |= set_field("host"; $host)
+    | .fields |= set_field("port"; 8080)
+    | .fields |= set_field("username"; $user)
+    | .fields |= set_field("password"; $pass)
+    | .fields |= set_field("movieCategory"; "movies")
+  ')
+  radarr PUT "downloadclient/${RADARR_DC_ID}" "$UPDATED_DC" > /dev/null
+  green "  Download client qBittorrent already exists (updated host/auth/category)"
 else
   RESULT=$(radarr POST "downloadclient" "{
     \"name\": \"qBittorrent\",
@@ -307,12 +350,12 @@ else
     \"implementation\": \"QBittorrent\",
     \"configContract\": \"QBittorrentSettings\",
     \"fields\": [
-      {\"name\": \"host\",     \"value\": \"qbittorrent\"},
+      {\"name\": \"host\",     \"value\": \"${QBIT_SERVICE_HOST}\"},
       {\"name\": \"port\",     \"value\": 8080},
       {\"name\": \"username\", \"value\": \"${QBIT_USER}\"},
       {\"name\": \"password\", \"value\": \"${QBIT_PASS}\"},
       {\"name\": \"movieCategory\",       \"value\": \"movies\"},
-      {\"name\": \"recentMoviePriority\", \"value\": 0},
+      {\"name\": \"recentMoviePriority\", \"value\": 1},
       {\"name\": \"olderMoviePriority\",  \"value\": 0},
       {\"name\": \"initialState\",        \"value\": 0},
       {\"name\": \"sequentialOrder\",     \"value\": false},
@@ -438,12 +481,32 @@ listenarr GET "system/info" | jq -r '"  Version: " + .version'
 step "Listenarr: adding qBittorrent as download client"
 EXISTING_LISTENARR_DC=$(listenarr GET "configuration/download-clients")
 if echo "$EXISTING_LISTENARR_DC" | jq -e '.[] | select(.name == "qBittorrent")' &>/dev/null; then
-  green "  Download client qBittorrent already exists"
+  LISTENARR_DC_ID=$(echo "$EXISTING_LISTENARR_DC" | jq -r '.[] | select(.name == "qBittorrent") | .id' | head -1)
+  RESULT=$(listenarr PUT "configuration/download-clients/${LISTENARR_DC_ID}" "{
+    \"id\": \"${LISTENARR_DC_ID}\",
+    \"name\": \"qBittorrent\",
+    \"type\": \"qbittorrent\",
+    \"host\": \"${QBIT_SERVICE_HOST}\",
+    \"port\": 8080,
+    \"username\": \"${QBIT_USER}\",
+    \"password\": \"${QBIT_PASS}\",
+    \"downloadPath\": \"/downloads\",
+    \"isEnabled\": true,
+    \"removeCompletedDownloads\": \"none\",
+    \"settings\": {\"category\": \"audiobooks\"}
+  }")
+  if echo "$RESULT" | jq -e '.id' &>/dev/null; then
+    green "  Download client qBittorrent already exists (updated host/auth/category)"
+  else
+    red "  Failed to update Listenarr download client:"
+    echo "$RESULT"
+    exit 1
+  fi
 else
   RESULT=$(listenarr POST "configuration/download-clients" "{
     \"name\": \"qBittorrent\",
     \"type\": \"qbittorrent\",
-    \"host\": \"qbittorrent\",
+    \"host\": \"${QBIT_SERVICE_HOST}\",
     \"port\": 8080,
     \"username\": \"${QBIT_USER}\",
     \"password\": \"${QBIT_PASS}\",
