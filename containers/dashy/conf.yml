@@ -69,7 +69,7 @@ sections:
         url: http://${SERVER_IP}:8080
         icon: si-qbittorrent
         statusCheck: true
-        statusCheckUrl: http://${SERVER_IP}:8080
+        statusCheckUrl: http://host.containers.internal:8080
 
       - title: Prowlarr
         description: Indexer management
@@ -84,13 +84,3 @@ sections:
         icon: si-bitmagnet
         statusCheck: true
         statusCheckUrl: http://bitmagnet:3333
-
-  - name: Entry
-    icon: si-caddy
-    displayData:
-      cols: 1
-    items:
-      - title: Dashy
-        description: This dashboard entrypoint
-        url: http://${SERVER_IP}:8081
-        icon: si-dashy
