@@ -69,7 +69,7 @@ sections:
         url: http://${SERVER_IP}:8080
         icon: si-qbittorrent
         statusCheck: true
-        statusCheckUrl: http://qbittorrent:8080
+        statusCheckUrl: http://${SERVER_IP}:8080
 
       - title: Prowlarr
         description: Indexer management

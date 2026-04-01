@@ -136,12 +136,7 @@ services:
       - /srv/containers/qbittorrent:/config:Z
       - /srv/media/downloads:/downloads # NO :Z
       - /srv/containers/qbittorrent/custom-cont-init.d:/custom-cont-init.d:Z
-    ports:
-      - "8080:8080"
-      - "6881:6881"
-      - "6881:6881/udp"
-    networks:
-      - media_net
+    network_mode: host # bypass pasta/netavark — rootless Podman drops UDP from listening sockets on bridge networks
     restart: unless-stopped
 
   sonarr:
