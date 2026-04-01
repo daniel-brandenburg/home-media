@@ -8,7 +8,7 @@ The stack is managed via Docker/Podman Compose, Caddy reverse proxy, and systemd
 
 ## Agent Rules
 
-- **Never run commands on the remote server.** Do not `ssh` into `db@mediaserver` or any other
+- **Never run commands on the remote server.** Do not `ssh` into the remote host or any other
   host. Do not execute `podman`, `systemctl`, or any other command remotely. All remote operations
   are the responsibility of the human operator.
 - **Never deploy changes without explicit user approval.** Do not run `deploy.sh`, do not invoke
@@ -47,10 +47,10 @@ packages.txt                            # Host system packages required (e.g. rs
 ./containers/deploy.sh
 
 # After deploying, start or restart the stack on the server
-ssh db@mediaserver 'podman compose -f /srv/containers/compose.yaml up -d'
+ssh user@mediaserver 'podman compose -f /srv/containers/compose.yaml up -d'
 ```
 
-### Stack management (on the remote server: `ssh db@mediaserver`)
+### Stack management (on the remote server: `ssh user@mediaserver`)
 
 ```bash
 # Start all containers
@@ -147,8 +147,8 @@ set -euo pipefail
 
 - **Global constants / environment config**: `SCREAMING_SNAKE_CASE`
   ```bash
-  REMOTE="db@mediaserver"
-  SONARR_URL="http://192.168.0.50:8989"
+  REMOTE="user@mediaserver"
+  SONARR_URL="http://${SERVER_IP}:8989"
   ```
 - **Local function variables**: `snake_case` with the `local` keyword
   ```bash
