@@ -8,7 +8,6 @@ No application code, no package manager, no test framework — just config files
 | Service          | Image                                          | Port   | Local URL             |
 |------------------|------------------------------------------------|--------|-----------------------|
 | Caddy            | `caddy:latest`                                 | 80/443 | (reverse proxy)       |
-| Pi-hole          | `pihole/pihole:2024.07.0`                      | 8053   | `pihole.home`         |
 | Dashy            | `ghcr.io/lissy93/dashy:latest`                 | 8081   | `dash.home`           |
 | Jellyfin         | `lscr.io/linuxserver/jellyfin:latest`          | 8096   | `jellyfin.home`       |
 | Audiobookshelf   | `ghcr.io/advplyr/audiobookshelf:latest`        | 13378  | `audiobooks.home`     |
@@ -22,7 +21,14 @@ No application code, no package manager, no test framework — just config files
 | Bitmagnet DB     | `postgres:16-alpine`                           | —      | (internal only)       |
 
 All services share the `media_net` bridge network and discover each other by container name.
-Local `.home` DNS names are resolved by Pi-hole.
+Local `.home` DNS names are resolved by your LAN DNS (for example Pi-hole or router DNS overrides).
+
+## Design Goals
+
+- Keep only the currently-used ARR apps: Prowlarr, Sonarr, Radarr, Listenarr
+- Keep a dashboard-first UX with Dashy and stable `.home` hostnames
+- Follow Servarr folder strategy: one filesystem for `/data/downloads`, `/data/TV`, and `/data/Movies` to preserve hardlinks
+- Keep setup idempotent so you can redeploy and re-run wiring scripts safely
 
 ## Repository Layout
 
@@ -158,7 +164,7 @@ systemctl status home-media
 
 **SELinux** — All volume mounts on the host filesystem use the `:Z` flag so Podman relabels them for container access. Mounts on the exFAT media drive intentionally omit `:Z` because exFAT does not support SELinux labels.
 
-**DNS** — Pi-hole resolves `*.home` names on the local network. All inter-container traffic uses container names as hostnames (e.g. `http://sonarr:8989`).
+**DNS** — your local DNS resolver maps `*.home` names on the LAN. All inter-container traffic uses container names as hostnames (e.g. `http://sonarr:8989`).
 
 **Prowlarr firewall** — Prowlarr's port (9696) may be blocked externally. `setup-arr.sh` routes Prowlarr API calls through SSH to avoid this.
 

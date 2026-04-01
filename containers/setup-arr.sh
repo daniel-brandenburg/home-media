@@ -102,14 +102,8 @@ qbit_login() {
       -H "Referer: ${QBIT_URL}" \
       --data "username=${QBIT_USER}&password=${pass}" \
       "${QBIT_URL}/api/v2/auth/login" && cat /tmp/qbit_login_body)
-    [[ "$body" == *"Ok."* ]] # Changed to wildcard match for safety]
+  [[ "$body" == *"Ok."* ]]
 }
-
-step "qBittorrent: setting default save path and preferences"
-curl -s -b "$QBIT_COOKIE" -c "$QBIT_COOKIE" \
-  -H "Referer: ${QBIT_URL}" \
-  --data-urlencode 'json={"save_path":"/downloads","temp_path_enabled":true,"temp_path":"/downloads/incomplete"}' \
-  "${QBIT_URL}/api/v2/app/setPreferences" > /dev/null
 
 if qbit_login "$QBIT_PASS"; then
   green "  Logged in with password: ${QBIT_PASS}"

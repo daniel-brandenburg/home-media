@@ -13,7 +13,7 @@ http://jellyfin.home {
 }
 
 http://qbit.home {
-    reverse_proxy localhost:8080
+    reverse_proxy host.containers.internal:8080
 }
 
 http://sonarr.home {

@@ -12,6 +12,15 @@ services:
       - /srv/containers/caddy/config:/config:Z
     networks:
       - media_net
+    depends_on:
+      - dashy
+      - jellyfin
+      - sonarr
+      - radarr
+      - prowlarr
+      - audiobookshelf
+      - listenarr
+      - bitmagnet
     restart: unless-stopped
 
 
@@ -32,6 +41,7 @@ services:
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
+      - TZ=${TZ}
     ports:
       - "9696:9696"
     volumes:
@@ -118,6 +128,7 @@ services:
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
+      - TZ=${TZ}
     volumes:
       - /srv/containers/jellyfin:/config:Z
       - /srv/media:/data # NO :Z (exFAT drive)
@@ -131,6 +142,7 @@ services:
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
+      - TZ=${TZ}
       - WEBUI_PORT=8080
     volumes:
       - /srv/containers/qbittorrent:/config:Z
@@ -145,6 +157,7 @@ services:
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
+      - TZ=${TZ}
     ports:
       - "8989:8989"
     volumes:
@@ -160,6 +173,7 @@ services:
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
+      - TZ=${TZ}
     ports:
       - "7878:7878"
     volumes:
@@ -184,6 +198,8 @@ services:
       - /srv/media/downloads:/downloads # NO :Z (exFAT drive)
     networks:
       - media_net
+    depends_on:
+      - qbittorrent
     restart: unless-stopped
 
 networks:
