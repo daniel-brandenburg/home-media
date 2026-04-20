@@ -33,6 +33,20 @@ sections:
         statusCheck: true
         statusCheckUrl: http://audiobookshelf:80
 
+      - title: Calibre-Web-Automated
+        description: Ebook library and reader
+        url: http://${SERVER_IP}:8083
+        icon: si-calibreweb
+        statusCheck: true
+        statusCheckUrl: http://calibre-web-automated:8083
+
+      - title: Shelfmark
+        description: Ebook search and downloader
+        url: http://${SERVER_IP}:8084
+        icon: si-bookstack
+        statusCheck: true
+        statusCheckUrl: http://shelfmark:8084
+
   - name: Automation
     icon: si-sonarr
     displayData:

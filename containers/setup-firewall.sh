@@ -36,6 +36,8 @@ declare -a TCP_PORTS=(
   "6881   qbittorrent    BitTorrent peer traffic (TCP)"
   "7878   radarr         Movie automation"
   "8080   qbittorrent    WebUI"
+  "8083   calibre-web    Ebook library"
+  "8084   shelfmark      Ebook downloader"
   "8081   dashy          Dashboard"
   "8096   jellyfin       Media streaming"
   "8989   sonarr         TV automation"

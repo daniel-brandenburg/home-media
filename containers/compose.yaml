@@ -15,10 +15,12 @@ services:
     depends_on:
       - dashy
       - jellyfin
+      - calibre-web-automated
       - sonarr
       - radarr
       - prowlarr
       - audiobookshelf
+      - shelfmark
       - listenarr
       - bitmagnet
     restart: unless-stopped
@@ -118,6 +120,63 @@ services:
       - /srv/media/audiobooks:/audiobooks # NO :Z (exFAT drive)
     networks:
       - media_net
+    restart: unless-stopped
+
+  calibre-web-automated:
+    image: crocodilestick/calibre-web-automated:latest
+    container_name: calibre-web-automated
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    ports:
+      - "8083:8083"
+    volumes:
+      - /srv/containers/calibre-web-automated:/config:Z
+      - /srv/media/ebooks/ingest:/cwa-book-ingest # NO :Z (exFAT drive)
+      - /srv/media/ebooks/library:/calibre-library # NO :Z (exFAT drive)
+    networks:
+      - media_net
+    restart: unless-stopped
+
+  shelfmark:
+    image: ghcr.io/calibrain/shelfmark-lite:latest
+    container_name: shelfmark
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      - EXT_BYPASSER_URL=http://flaresolverr:8191
+    ports:
+      - "8084:8084"
+    volumes:
+      - /srv/containers/shelfmark:/config:Z
+      - /srv/media/ebooks/downloads:/books # NO :Z (exFAT drive)
+      - /srv/media/downloads:/srv/media/downloads # NO :Z (exFAT drive)
+    networks:
+      - media_net
+    depends_on:
+      - flaresolverr
+    restart: unless-stopped
+
+  ebook-handoff:
+    image: alpine:3.20
+    container_name: ebook-handoff
+    command: >
+      sh -c "set -eu;
+      mkdir -p /ingest;
+      while true; do
+        find /downloads -type f ! -name '*.part' ! -name '*.tmp' ! -name '*.crdownload' ! -name '*.aria2' ! -name '*.!qB' | while IFS= read -r src; do
+          rel=$${src#/downloads/};
+          dst=/ingest/$$rel;
+          mkdir -p \"$$(dirname \"$$dst\")\";
+          mv -n \"$$src\" \"$$dst\" || true;
+        done;
+        sleep 30;
+      done"
+    volumes:
+      - /srv/media/ebooks/downloads:/downloads # NO :Z (exFAT drive)
+      - /srv/media/ebooks/ingest:/ingest # NO :Z (exFAT drive)
     restart: unless-stopped
 
   jellyfin:

@@ -32,6 +32,14 @@ http://audiobooks.home {
     reverse_proxy audiobookshelf:80
 }
 
+http://ebooks.home {
+    reverse_proxy calibre-web-automated:8083
+}
+
+http://shelfmark.home {
+    reverse_proxy shelfmark:8084
+}
+
 http://listenarr.home {
     reverse_proxy listenarr:4545
 }
