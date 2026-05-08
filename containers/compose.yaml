@@ -21,7 +21,6 @@ services:
       - prowlarr
       - audiobookshelf
       - shelfmark
-      - listenarr
       - bitmagnet
     restart: unless-stopped
 
@@ -240,25 +239,6 @@ services:
       - /srv/media:/data # NO :Z
     networks:
       - media_net
-    restart: unless-stopped
-
-  listenarr:
-    image: ghcr.io/listenarrs/listenarr:canary
-    container_name: listenarr
-    environment:
-      - PUID=${PUID}
-      - PGID=${PGID}
-      - UMASK=022
-    ports:
-      - "4545:4545"
-    volumes:
-      - /srv/containers/listenarr:/app/config:Z
-      - /srv/media/audiobooks:/audiobooks # NO :Z (exFAT drive)
-      - /srv/media/downloads:/downloads # NO :Z (exFAT drive)
-    networks:
-      - media_net
-    depends_on:
-      - qbittorrent
     restart: unless-stopped
 
 networks:

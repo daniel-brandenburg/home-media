@@ -18,7 +18,7 @@ source "$ENV_FILE"
 
 # ─── Derived service URLs ──────────────────────────────────────────────────
 QBIT_URL="http://${SERVER_IP}:8080"
-QBIT_SERVICE_HOST="host.containers.internal"
+QBIT_SERVICE_HOST="${SERVER_IP}"
 SONARR_URL="http://${SERVER_IP}:8989"
 RADARR_URL="http://${SERVER_IP}:7878"
 PROWLARR_URL="http://${SERVER_IP}:9696"

@@ -40,10 +40,6 @@ http://shelfmark.home {
     reverse_proxy shelfmark:8084
 }
 
-http://listenarr.home {
-    reverse_proxy listenarr:4545
-}
-
 http://bitmagnet.home {
     reverse_proxy bitmagnet:3333
 }

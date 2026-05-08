@@ -40,13 +40,6 @@ sections:
         statusCheck: true
         statusCheckUrl: http://calibre-web-automated:8083
 
-      - title: Shelfmark
-        description: Ebook search and downloader
-        url: http://${SERVER_IP}:8084
-        icon: si-bookstack
-        statusCheck: true
-        statusCheckUrl: http://shelfmark:8084
-
   - name: Automation
     icon: si-sonarr
     displayData:
@@ -66,13 +59,6 @@ sections:
         statusCheck: true
         statusCheckUrl: http://radarr:7878
 
-      - title: Listenarr
-        description: Audiobook download management
-        url: http://${SERVER_IP}:4545
-        icon: si-audiobookshelf
-        statusCheck: true
-        statusCheckUrl: http://listenarr:4545
-
   - name: Network
     icon: si-qbittorrent
     displayData:
@@ -83,7 +69,7 @@ sections:
         url: http://${SERVER_IP}:8080
         icon: si-qbittorrent
         statusCheck: true
-        statusCheckUrl: http://host.containers.internal:8080
+        statusCheckUrl: http://${SERVER_IP}:8080
 
       - title: Prowlarr
         description: Indexer management
@@ -98,3 +84,11 @@ sections:
         icon: si-bitmagnet
         statusCheck: true
         statusCheckUrl: http://bitmagnet:3333
+
+      - title: Shelfmark
+        description: Ebook search and downloader
+        url: http://${SERVER_IP}:8084
+        icon: si-bookstack
+        statusCheck: true
+        statusCheckUrl: http://shelfmark:8084
+
