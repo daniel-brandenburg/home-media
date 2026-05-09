@@ -1,0 +1,17 @@
+[Unit]
+Description=Dashy dashboard
+After=network-online.target media_net-network.service
+Requires=media_net-network.service
+
+[Container]
+Image=ghcr.io/lissy93/dashy:latest
+ContainerName=dashy
+PublishPort=8081:8080
+Volume=/srv/containers/dashy/conf.yml:/app/user-data/conf.yml:Z
+Network=media_net.network
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

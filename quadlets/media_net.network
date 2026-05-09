@@ -1,0 +1,5 @@
+[Unit]
+Description=Home Media bridge network
+
+[Network]
+Driver=bridge

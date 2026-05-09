@@ -1,0 +1,22 @@
+[Unit]
+Description=Shelfmark ebook metadata manager
+After=network-online.target media_net-network.service srv-media.mount flaresolverr.service
+Requires=media_net-network.service srv-media.mount flaresolverr.service
+
+[Container]
+Image=ghcr.io/calibrain/shelfmark-lite:latest
+ContainerName=shelfmark
+EnvironmentFile=/srv/containers/.env
+Environment=EXT_BYPASSER_URL=http://flaresolverr:8191
+PublishPort=8084:8084
+Volume=/srv/containers/shelfmark:/config:Z
+Volume=/srv/media/ebooks/downloads:/books
+Volume=/srv/media/downloads:/srv/media/downloads
+# NO :Z on media volumes (exFAT drive does not support SELinux labels)
+Network=media_net.network
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

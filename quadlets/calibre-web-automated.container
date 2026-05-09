@@ -1,0 +1,21 @@
+[Unit]
+Description=Calibre Web Automated ebook manager
+After=network-online.target media_net-network.service srv-media.mount
+Requires=media_net-network.service srv-media.mount
+
+[Container]
+Image=crocodilestick/calibre-web-automated:latest
+ContainerName=calibre-web-automated
+EnvironmentFile=/srv/containers/.env
+PublishPort=8083:8083
+Volume=/srv/containers/calibre-web-automated:/config:Z
+Volume=/srv/media/ebooks/ingest:/cwa-book-ingest
+Volume=/srv/media/ebooks/library:/calibre-library
+# NO :Z on ebook volumes (exFAT drive does not support SELinux labels)
+Network=media_net.network
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

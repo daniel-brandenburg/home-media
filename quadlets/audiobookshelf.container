@@ -1,0 +1,22 @@
+[Unit]
+Description=Audiobookshelf audiobook server
+After=network-online.target media_net-network.service srv-media.mount
+Requires=media_net-network.service srv-media.mount
+
+[Container]
+Image=ghcr.io/advplyr/audiobookshelf:latest
+ContainerName=audiobookshelf
+EnvironmentFile=/srv/containers/.env
+PublishPort=13378:80
+Volume=/srv/containers/audiobookshelf/config:/config:Z
+Volume=/srv/containers/audiobookshelf/metadata:/metadata:Z
+Volume=/srv/media/audiobooks:/audiobooks
+Volume=/srv/media/graphicaudio:/graphicaudio
+# NO :Z on the audiobooks volume (exFAT drive does not support SELinux labels)
+Network=media_net.network
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

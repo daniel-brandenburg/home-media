@@ -1,0 +1,18 @@
+[Unit]
+Description=FlareSolverr Cloudflare bypass proxy
+After=network-online.target media_net-network.service
+Requires=media_net-network.service
+
+[Container]
+Image=ghcr.io/flaresolverr/flaresolverr:latest
+ContainerName=flaresolverr
+EnvironmentFile=/srv/containers/.env
+Environment=LOG_LEVEL=info
+# No host port — internal only; Prowlarr reaches it at http://flaresolverr:8191
+Network=media_net.network
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

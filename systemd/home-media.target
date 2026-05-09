@@ -1,0 +1,26 @@
+[Unit]
+Description=Home Media Stack
+Documentation=https://github.com/anomalyco/opencode
+# This target groups all home-media container services.
+# With quadlets each container manages its own lifecycle via its generated
+# systemd service.  This target exists so you can start/stop/status the
+# whole stack with a single unit name.
+After=network-online.target srv-media.mount
+Wants=network-online.target
+Requires=srv-media.mount
+
+# Pull in every generated container service
+Wants=dashy.service
+Wants=prowlarr.service
+Wants=flaresolverr.service
+Wants=audiobookshelf.service
+Wants=calibre-web-automated.service
+Wants=shelfmark.service
+Wants=ebook-handoff.service
+Wants=jellyfin.service
+Wants=qbittorrent.service
+Wants=sonarr.service
+Wants=radarr.service
+
+[Install]
+WantedBy=default.target

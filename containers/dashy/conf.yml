@@ -78,13 +78,6 @@ sections:
         statusCheck: true
         statusCheckUrl: http://prowlarr:9696
 
-      - title: Bitmagnet
-        description: DHT crawler & torrent search
-        url: http://${SERVER_IP}:3333
-        icon: si-bitmagnet
-        statusCheck: true
-        statusCheckUrl: http://bitmagnet:3333
-
       - title: Shelfmark
         description: Ebook search and downloader
         url: http://${SERVER_IP}:8084

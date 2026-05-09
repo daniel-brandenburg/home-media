@@ -1,0 +1,20 @@
+[Unit]
+Description=Radarr movie manager
+After=network-online.target media_net-network.service srv-media.mount
+Requires=media_net-network.service srv-media.mount
+
+[Container]
+Image=lscr.io/linuxserver/radarr:latest
+ContainerName=radarr
+EnvironmentFile=/srv/containers/.env
+PublishPort=7878:7878
+Volume=/srv/containers/radarr:/config:Z
+Volume=/srv/media:/data
+# NO :Z on /data (exFAT drive does not support SELinux labels)
+Network=media_net.network
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

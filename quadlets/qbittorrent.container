@@ -1,0 +1,21 @@
+[Unit]
+Description=qBittorrent torrent client
+After=network-online.target srv-media.mount
+
+[Container]
+Image=lscr.io/linuxserver/qbittorrent:latest
+ContainerName=qbittorrent
+EnvironmentFile=/srv/containers/.env
+Environment=WEBUI_PORT=8080
+Volume=/srv/containers/qbittorrent:/config:Z
+Volume=/srv/media/downloads:/downloads
+Volume=/srv/containers/qbittorrent/custom-cont-init.d:/custom-cont-init.d:Z
+# NO :Z on downloads (exFAT drive does not support SELinux labels)
+# Network=host: bypass pasta/netavark — rootless Podman drops UDP from listening sockets on bridge networks
+Network=host
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target
