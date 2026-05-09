@@ -2,7 +2,8 @@
 
 This repository is a **self-hosted home media server** infrastructure-as-code project.
 It contains no application code, no package manager, and no test framework.
-The stack is managed via Docker/Podman Compose, Caddy reverse proxy, and systemd.
+The stack is managed via Podman quadlets, Caddy reverse proxy, and systemd.
+Deployment is automated with **pyinfra**.
 
 ---
 
@@ -11,7 +12,7 @@ The stack is managed via Docker/Podman Compose, Caddy reverse proxy, and systemd
 - **Never run commands on the remote server.** Do not `ssh` into the remote host or any other
   host. Do not execute `podman`, `systemctl`, or any other command remotely. All remote operations
   are the responsibility of the human operator.
-- **Never deploy changes without explicit user approval.** Do not run `deploy.sh`, do not invoke
+- **Never deploy changes without explicit user approval.** Do not run `pyinfra`, do not invoke
   `rsync` to push files, and do not suggest or initiate a deployment unless the user has explicitly
   asked you to deploy in that same conversation turn.
 
@@ -20,82 +21,83 @@ The stack is managed via Docker/Podman Compose, Caddy reverse proxy, and systemd
 ## Repository Layout
 
 ```
-containers/
-  compose.yaml                          # Full service definitions (Podman Compose)
-  deploy.sh                             # rsync config files to remote server
-  setup-arr.sh                          # One-time API wiring for *arr + qBittorrent
-  caddy/Caddyfile                       # Reverse proxy virtual hosts
-  dashy/conf.yml                        # Dashboard layout and service tiles
+.env.example                          # Environment variable template — copy to .env
+packages.txt                          # Host system packages required (e.g. rsync)
+config/
+  caddy/Caddyfile                     # Reverse proxy virtual hosts
+  dashy/conf.yml                      # Dashboard layout and service tiles (${SERVER_IP} placeholder)
   qbittorrent/
     custom-cont-init.d/
-      99-webui-proxy.sh                 # qBittorrent WebUI proxy settings patch
+      99-webui-proxy.sh               # qBittorrent WebUI proxy settings patch
+quadlets/                             # Podman quadlet unit files (*.container, *.network)
 systemd/
-  home-media.service                    # systemd unit: start/stop the stack
-  srv-media.mount                       # systemd unit: mount external drive
-  srv-media.automount                   # systemd unit: lazy automount
-packages.txt                            # Host system packages required (e.g. rsync)
+  home-media.target                   # systemd target: groups all container services
+  srv-media.mount                     # systemd unit: mount external drive
+  srv-media.automount                 # systemd unit: lazy automount
+deploy/
+  inventory.py                        # pyinfra inventory (reads REMOTE from env/.env)
+  deploy.py                           # Main deploy entry point — includes all tasks
+  tasks/
+    system.py                         # Install packages, create /srv/containers dirs
+    config.py                         # Upload Caddyfile, dashy conf.yml, qbit init, .env
+    quadlets.py                       # Upload quadlet files to /etc/containers/systemd/
+    systemd.py                        # Upload systemd units, daemon-reload, enable services
+    firewall.py                       # Open required ports in firewalld
+    arr_setup.py                      # One-time API wiring (*arr + qBittorrent) — run separately
 ```
 
 ---
 
 ## Operational Commands
 
-### Deploy (from developer machine, run inside `containers/`)
+### Configure (developer machine)
 
 ```bash
-# Sync config files to the remote server via rsync
-./containers/deploy.sh
+cp .env.example .env
+$EDITOR .env   # fill in REMOTE, SERVER_IP, PUID, PGID, TZ, MEDIA_UUID, QBIT_*, POSTGRES_PASSWORD
+```
 
-# After deploying, start or restart the stack on the server
-ssh user@mediaserver 'podman compose -f /srv/containers/compose.yaml up -d'
+### Deploy (from developer machine, run from repo root)
+
+```bash
+# Full deploy: packages + config + quadlets + systemd units + firewall
+pyinfra deploy/inventory.py deploy/deploy.py
+
+# Deploy only a specific task (e.g. after editing config files):
+pyinfra deploy/inventory.py deploy/tasks/config.py
+pyinfra deploy/inventory.py deploy/tasks/quadlets.py
+pyinfra deploy/inventory.py deploy/tasks/firewall.py
+```
+
+### One-time arr wiring (run after the stack is up for the first time)
+
+```bash
+# Fill in API keys in .env first (or leave blank — they will be auto-fetched from the server)
+pyinfra deploy/inventory.py deploy/tasks/arr_setup.py
 ```
 
 ### Stack management (on the remote server: `ssh user@mediaserver`)
 
 ```bash
-# Start all containers
-podman compose -f /srv/containers/compose.yaml up -d
+# Start all containers via the grouping target
+systemctl start home-media.target
 
 # Stop all containers
-podman compose -f /srv/containers/compose.yaml down
+systemctl stop home-media.target
 
 # View logs for a specific service
-podman logs -f <service>        # e.g. podman logs -f sonarr
+journalctl -u sonarr.service -f
 
-# Restart a single service
-podman restart <service>        # e.g. podman restart caddy
-```
-
-### systemd (on the remote server)
-
-```bash
-systemctl start home-media
-systemctl stop home-media
-systemctl enable home-media
-systemctl status home-media
-```
-
-### One-time setup (run after stack first starts)
-
-```bash
-# Configures qBittorrent, Sonarr, Radarr, and Prowlarr via their REST APIs.
-# Safe to re-run — all API calls are idempotent.
-./containers/setup-arr.sh
+# Restart a single container service
+systemctl restart caddy.service
 ```
 
 ### Firewall (on the remote server — MicroOS uses firewalld)
 
-Whenever a new host port is exposed, open it in the firewall on the server:
+Handled automatically by `deploy/tasks/firewall.py`.  To open an additional port manually:
 
 ```bash
 sudo firewall-cmd --permanent --add-port=<PORT>/tcp
-sudo firewall-cmd --reload
-```
-
-For example, adding Listenarr (port 4545):
-
-```bash
-sudo firewall-cmd --permanent --add-port=4545/tcp
 sudo firewall-cmd --reload
 ```
 
@@ -110,7 +112,6 @@ There is no compiled code, no test framework, and no linter. Validation is manua
 | Service      | Image                                  | Internal Port | `.home` URL           |
 |--------------|----------------------------------------|---------------|-----------------------|
 | Caddy        | `caddy:latest`                         | 80, 443       | (reverse proxy)       |
-| Pi-hole      | `pihole/pihole:2024.07.0`              | 8053          | `pihole.home`         |
 | Dashy        | `ghcr.io/lissy93/dashy:latest`         | 8081          | `dash.home`           |
 | Prowlarr     | `lscr.io/linuxserver/prowlarr:latest`  | 9696          | `prowlarr.home`       |
 | FlareSolverr | `ghcr.io/flaresolverr/flaresolverr:latest` | 8191      | (internal only)       |
@@ -119,109 +120,43 @@ There is no compiled code, no test framework, and no linter. Validation is manua
 | qBittorrent  | `lscr.io/linuxserver/qbittorrent:latest` | 8080        | `qbit.home`           |
 | Sonarr       | `lscr.io/linuxserver/sonarr:latest`    | 8989          | `sonarr.home`         |
 | Radarr       | `lscr.io/linuxserver/radarr:latest`    | 7878          | `radarr.home`         |
-| Listenarr    | `ghcr.io/listenarrs/listenarr:canary`  | 4545          | `listenarr.home`      |
-| Bitmagnet    | `ghcr.io/bitmagnet-io/bitmagnet:latest` | 3333         | `bitmagnet.home`      |
-| Bitmagnet DB | `postgres:16-alpine`                   | (internal)    | (internal only)       |
+| Calibre-Web  | `crocodilestick/calibre-web-automated:latest` | 8083   | `ebooks.home`         |
+| Shelfmark    | `ghcr.io/calibrain/shelfmark-lite:latest` | 8084       | `shelfmark.home`      |
+| Ebook Handoff | `alpine:3.20`                         | (none)        | (internal only)       |
 
 All containers share the `media_net` bridge network and discover each other by container name
 (e.g. `http://sonarr:8989`, `reverse_proxy jellyfin:8096`).
 
 ---
 
-## Bash Script Style Guide
+## Python / pyinfra Style Guide
 
-All `.sh` files in this repo follow these conventions:
-
-### Shebang and strict mode
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-```
-
-- Always use `#!/usr/bin/env bash` (not `/bin/bash`) for portability.
-- Always set strict mode at the top — no exceptions.
-- `99-webui-proxy.sh` uses `#!/bin/bash` since it runs inside a container where `env` is not needed.
-
-### Variables
-
-- **Global constants / environment config**: `SCREAMING_SNAKE_CASE`
-  ```bash
-  REMOTE="user@mediaserver"
-  SONARR_URL="http://${SERVER_IP}:8989"
-  ```
-- **Local function variables**: `snake_case` with the `local` keyword
-  ```bash
-  local method="$1" path="$2" body="${3:-}"
-  ```
-- **Temporary variables**: `SCREAMING_SNAKE_CASE`
-  ```bash
-  EXISTING_ROOTS=$(sonarr GET "rootfolder")
-  ```
-
-### Functions
-
-- Named functions use `snake_case`
-  ```bash
-  qbit_login() { ... }
-  prowlarr_ssh() { ... }
-  update_setting() { ... }
-  ```
-- Short single-word helper functions are acceptable for color output and logging:
-  ```bash
-  red()   { printf '\033[31m%s\033[0m\n' "$*"; }
-  green() { printf '\033[32m%s\033[0m\n' "$*"; }
-  blue()  { printf '\033[34m%s\033[0m\n' "$*"; }
-  step()  { echo; blue "==> $*"; }
-  ```
-
-### Dependency guards
-
-Check for required external tools at the top of any script that calls them:
-
-```bash
-require() {
-  command -v "$1" &>/dev/null || { red "Missing required tool: $1"; exit 1; }
-}
-require curl
-require jq
-require ssh
-```
-
-### Error handling
-
-1. **`set -euo pipefail`** — script aborts on unhandled errors, unset variables, and pipeline failures.
-2. **Trap for cleanup** — always use `trap` to clean up temp files:
-   ```bash
-   QBIT_COOKIE=$(mktemp)
-   trap 'rm -f "$QBIT_COOKIE"' EXIT
-   ```
-3. **Idempotency pattern** — always GET and check before POST:
-   ```bash
-   if echo "$EXISTING_ROOTS" | jq -e '.[] | select(.path == "/data/TV")' &>/dev/null; then
-     green "  Root folder /data/TV already exists"
-   else
-     sonarr POST "rootfolder" '{"path":"/data/TV"}' | jq -r '"  Added: " + .path'
-   fi
-   ```
-4. **API response validation** — after a POST, verify `.id` is present:
-   ```bash
-   if echo "$RESULT" | jq -e '.id' &>/dev/null; then
-     echo "$RESULT" | jq -r '"  Added: " + .name'
-   else
-     red "  Failed:"
-     echo "$RESULT" | jq -r '.[] | "  [" + .severity + "] " + .errorMessage' 2>/dev/null || echo "$RESULT"
-     exit 1
-   fi
-   ```
-5. **Fallback logic** — try primary action first, fall back gracefully with clear messaging.
+All files under `deploy/` follow these conventions:
 
 ### File naming
 
-- Shell scripts: `kebab-case.sh`
-- Systemd units: `kebab-case.service` / `.mount` / `.automount`
-- Config files: match the tool's convention (`Caddyfile`, `conf.yml`, `compose.yaml`)
-- Container init scripts: numeric prefix indicating execution order (`99-webui-proxy.sh`)
+- Task files: `snake_case.py`
+- Entry points: `inventory.py`, `deploy.py`
+
+### Environment variables
+
+- Required vars are validated at import time with a clear error message and `sys.exit(1)`.
+- `python-dotenv` is optional — if installed, the root `.env` is auto-loaded.
+  If not installed, the real environment is used directly.
+- All env var reads use `os.environ.get("VAR", default)` or `os.environ["VAR"]`.
+
+### pyinfra operations
+
+- Prefer `files.put()` for uploading files over raw shell commands.
+- Use `systemd.service()` for enabling/starting units rather than `server.shell("systemctl ...")`.
+- Use `server.shell()` for tasks that have no native pyinfra operation (firewall-cmd, curl API calls).
+- Each `server.shell()` call sets `set -euo pipefail` at the top of its script.
+- All API-touching shell blocks check for `.id` in the response and print a clear error on failure.
+
+### Idempotency
+
+- Always GET-then-check before POST (never blindly POST and ignore duplicates).
+- `firewall-cmd --add-port` is already idempotent; always add `|| true` to suppress "already open" errors.
 
 ---
 
@@ -229,44 +164,25 @@ require ssh
 
 ### Volume mounts and SELinux
 
-- Add `:Z` to volume mounts on SELinux-enabled hosts so Podman relabels files for container access:
-  ```yaml
-  - /srv/containers/caddy/Caddyfile:/etc/caddy/Caddyfile:Z
-  ```
+- Add `:Z` to volume mounts on SELinux-enabled hosts so Podman relabels files for container access.
 - **Do NOT add `:Z`** for volumes on exFAT filesystems — exFAT does not support SELinux labels.
-  Comment the reason inline:
-  ```yaml
-  - /srv/media:/data # NO :Z (exFAT drive)
-  ```
+  Comment the reason inline in the quadlet file.
 
 ### LinuxServer.io images
 
 All media service containers use `lscr.io/linuxserver/` images. Always set:
-```yaml
-environment:
-  - PUID=1000
-  - PGID=1000
 ```
-Config lives under `/config` inside the container, mapped to `/srv/containers/<service>` on the host.
+Environment=PUID=1000
+Environment=PGID=1000
+```
+or use `EnvironmentFile=/srv/containers/.env` in the quadlet.
 
 ### Hardlinks for media import
 
 Sonarr/Radarr use hardlinks (not copies) when importing completed downloads. This requires the
-downloads directory and the media directory to be on the **same filesystem**. Both `/data/downloads`
-and `/data/TV` (or `/data/Movies`) inside the containers must resolve to the same physical drive
-(`/srv/media` on the host).
+downloads directory and the media directory to be on the **same filesystem**.
 
-### Firewalled services
+### Prowlarr firewall
 
-Prowlarr (port 9696) may be firewalled externally. Route API calls to it via SSH:
-```bash
-prowlarr_ssh() {
-  ssh "$REMOTE" "curl -sf -X '${1}' -H 'X-Api-Key: ${PROWLARR_API}' \
-    http://localhost:9696/api/v1/${2}"
-}
-```
-
-### Network naming
-
-Internal service discovery uses container names as hostnames on `media_net`.
-External user-facing URLs use `.home` local DNS names resolved by Pi-hole.
+Prowlarr (port 9696) may be firewalled externally. `arr_setup.py` calls the Prowlarr API via
+`localhost` inside the `server.shell()` SSH session — no extra SSH hop needed.
