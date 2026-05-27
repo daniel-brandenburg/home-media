@@ -11,7 +11,6 @@ Environment=EXT_BYPASSER_URL=http://flaresolverr:8191
 PublishPort=8084:8084
 Volume=/srv/containers/shelfmark:/config:Z
 Volume=/srv/media/ebooks/downloads:/books
-Volume=/srv/media/downloads:/srv/media/downloads
 # NO :Z on media volumes (exFAT drive does not support SELinux labels)
 Network=media_net.network
 
@@ -19,4 +18,4 @@ Network=media_net.network
 Restart=always
 
 [Install]
-WantedBy=default.target
+WantedBy=home-media.target

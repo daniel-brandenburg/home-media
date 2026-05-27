@@ -5,6 +5,8 @@ After=srv-media.mount
 [Container]
 Image=alpine:3.20
 ContainerName=ebook-handoff
+EnvironmentFile=/srv/containers/.env
+User=1000:1000
 Exec=sh -c "set -eu; mkdir -p /ingest; while true; do find /downloads -type f ! -name '*.part' ! -name '*.tmp' ! -name '*.crdownload' ! -name '*.aria2' ! -name '*.!qB' | while IFS= read -r src; do rel=${src#/downloads/}; dst=/ingest/$rel; mkdir -p \"$(dirname \"$dst\")\"; mv -n \"$src\" \"$dst\" || true; done; sleep 30; done"
 Volume=/srv/media/ebooks/downloads:/downloads # NO :Z (exFAT drive)
 Volume=/srv/media/ebooks/ingest:/ingest # NO :Z (exFAT drive)
@@ -13,4 +15,4 @@ Volume=/srv/media/ebooks/ingest:/ingest # NO :Z (exFAT drive)
 Restart=always
 
 [Install]
-WantedBy=default.target
+WantedBy=home-media.target

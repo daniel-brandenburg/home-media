@@ -12,7 +12,7 @@ Usage
 Environment variables (from .env or real env)
 ---------------------------------------------
 Required:
-    SERVER_IP       LAN IP of the media server
+    REMOTE       LAN IP of the media server
     REMOTE_DIR      Remote config path (default: /srv/containers)
 
 qBittorrent:
@@ -41,6 +41,7 @@ from pyinfra.operations import server
 
 # ── Validate required environment variables ────────────────────────────────────
 
+
 def _require_env(*names: str) -> dict[str, str]:
     """Return a dict of env var values; abort with a clear message if any are missing."""
     missing = [n for n in names if not os.environ.get(n)]
@@ -55,17 +56,17 @@ def _require_env(*names: str) -> dict[str, str]:
     return {n: os.environ[n] for n in names}
 
 
-_required = _require_env("SERVER_IP", "QBIT_USER", "QBIT_PASS")
+_required = _require_env("REMOTE", "QBIT_USER", "QBIT_PASS")
 
-SERVER_IP = _required["SERVER_IP"]
+REMOTE = _required["REMOTE"]
 QBIT_USER = _required["QBIT_USER"]
 QBIT_PASS = _required["QBIT_PASS"]
 REMOTE_DIR = os.environ.get("REMOTE_DIR", "/srv/containers")
 
-QBIT_URL = f"http://{SERVER_IP}:8080"
-SONARR_URL = f"http://{SERVER_IP}:8989"
-RADARR_URL = f"http://{SERVER_IP}:7878"
-LISTENARR_URL = f"http://{SERVER_IP}:4545"
+QBIT_URL = f"http://{REMOTE}:8080"
+SONARR_URL = f"http://{REMOTE}:8989"
+RADARR_URL = f"http://{REMOTE}:7878"
+LISTENARR_URL = f"http://{REMOTE}:4545"
 
 # API keys — if blank, auto-fetch via SSH from the app's config file on the server
 SONARR_API = os.environ.get("SONARR_API", "")
@@ -89,7 +90,7 @@ def _fetch_json_api_key(config_path: str) -> str:
 _qbit_cookie = "/tmp/qbit_arr_setup.cookie"
 
 server.shell(
-    name="qBittorrent: log in (try configured password, fall back to temp password)",
+    name="qBittorrent: wait for WebUI to be ready, then log in",
     commands=[
         f"""
 set -euo pipefail
@@ -98,28 +99,24 @@ QBIT_USER="{QBIT_USER}"
 QBIT_PASS="{QBIT_PASS}"
 COOKIE="{_qbit_cookie}"
 
-login() {{
-  body=$(curl -s -c "$COOKIE" --data "username=$QBIT_USER&password=$1" \
-    -H "Referer: $QBIT_URL" "$QBIT_URL/api/v2/auth/login")
-  [[ "$body" == *"Ok."* ]]
-}}
-
-if login "$QBIT_PASS"; then
-  echo "Logged in with configured password."
-else
-  echo "Trying temp password from container logs..."
-  TEMP=$(journalctl --unit=qbittorrent.service -n 200 --no-pager 2>/dev/null | \\
-    grep -oP 'A temporary password is provided for this session: \\K\\S+' | tail -1 || true)
-  if [[ -z "$TEMP" ]]; then
-    echo "ERROR: Could not determine qBittorrent password." >&2; exit 1
+echo "Waiting for qBittorrent WebUI..."
+for i in $(seq 1 30); do
+  if curl -sf "$QBIT_URL/api/v2/app/version" > /dev/null 2>&1; then
+    echo "  WebUI ready (attempt $i)"
+    break
   fi
-  login "$TEMP" || {{ echo "ERROR: Temp password login failed." >&2; exit 1; }}
-  echo "Logged in with temp password. Setting permanent password..."
-  curl -s -b "$COOKIE" \\
-    --data-urlencode "json={{\\\"web_ui_password\\\":\\\"$QBIT_PASS\\\"}}" \\
-    "$QBIT_URL/api/v2/app/setPreferences" > /dev/null
-  echo "Permanent password set."
+  if [[ $i -eq 30 ]]; then
+    echo "ERROR: qBittorrent WebUI did not become ready after 30 attempts." >&2; exit 1
+  fi
+  sleep 2
+done
+
+body=$(curl -s -c "$COOKIE" --data "username=$QBIT_USER&password=$QBIT_PASS" \\
+  -H "Referer: $QBIT_URL" "$QBIT_URL/api/v2/auth/login")
+if [[ "$body" != *"Ok."* ]]; then
+  echo "ERROR: qBittorrent login failed. Check QBIT_USER/QBIT_PASS in .env and re-run deploy first." >&2; exit 1
 fi
+echo "Logged in successfully."
 """,
     ],
 )
@@ -136,7 +133,11 @@ echo "save_path=/downloads"
     ],
 )
 
-for _cat, _path in [("tv", "/downloads/tv"), ("movies", "/downloads/movies"), ("audiobooks", "/downloads/audiobooks")]:
+for _cat, _path in [
+    ("tv", "/downloads/tv"),
+    ("movies", "/downloads/movies"),
+    ("audiobooks", "/downloads/audiobooks"),
+]:
     server.shell(
         name=f"qBittorrent: ensure category '{_cat}'",
         commands=[
@@ -152,6 +153,7 @@ echo "Category '{_cat}' -> {_path}"
 
 # ── API key resolution ────────────────────────────────────────────────────────
 # Each key is resolved from the env; if missing, it is fetched from the server.
+
 
 def _api_key_shell_var(var: str, current_val: str, fetch_cmd: str) -> str:
     """
@@ -171,19 +173,23 @@ echo "Auto-fetched {var}: ${{{var}}}"
 
 
 _sonarr_key_block = _api_key_shell_var(
-    "SONARR_API", SONARR_API,
+    "SONARR_API",
+    SONARR_API,
     _fetch_xml_api_key(f"{REMOTE_DIR}/sonarr/config.xml"),
 )
 _radarr_key_block = _api_key_shell_var(
-    "RADARR_API", RADARR_API,
+    "RADARR_API",
+    RADARR_API,
     _fetch_xml_api_key(f"{REMOTE_DIR}/radarr/config.xml"),
 )
 _prowlarr_key_block = _api_key_shell_var(
-    "PROWLARR_API", PROWLARR_API,
+    "PROWLARR_API",
+    PROWLARR_API,
     _fetch_xml_api_key(f"{REMOTE_DIR}/prowlarr/config.xml"),
 )
 _listenarr_key_block = _api_key_shell_var(
-    "LISTENARR_API", LISTENARR_API,
+    "LISTENARR_API",
+    LISTENARR_API,
     _fetch_json_api_key(f"{REMOTE_DIR}/listenarr/config.json"),
 )
 
@@ -235,7 +241,7 @@ server.shell(
 set -euo pipefail
 {_sonarr_key_block}
 BASE="{SONARR_URL}/api/v3"
-HOST="{SERVER_IP}"
+HOST="{REMOTE}"
 RPMS=$(curl -sf -H "X-Api-Key: $SONARR_API" "$BASE/remotepathmapping")
 if echo "$RPMS" | jq -e --arg h "$HOST" '.[] | select(.host == $h)' > /dev/null; then
   echo "  Remote path mapping for $HOST already exists"
@@ -255,7 +261,7 @@ server.shell(
 set -euo pipefail
 {_sonarr_key_block}
 BASE="{SONARR_URL}/api/v3"
-HOST="{SERVER_IP}"
+HOST="{REMOTE}"
 DCS=$(curl -sf -H "X-Api-Key: $SONARR_API" "$BASE/downloadclient")
 if echo "$DCS" | jq -e '.[] | select(.name == "qBittorrent")' > /dev/null; then
   echo "  qBittorrent download client already configured in Sonarr"
@@ -334,7 +340,7 @@ server.shell(
 set -euo pipefail
 {_radarr_key_block}
 BASE="{RADARR_URL}/api/v3"
-HOST="{SERVER_IP}"
+HOST="{REMOTE}"
 RPMS=$(curl -sf -H "X-Api-Key: $RADARR_API" "$BASE/remotepathmapping")
 if echo "$RPMS" | jq -e --arg h "$HOST" '.[] | select(.host == $h)' > /dev/null; then
   echo "  Remote path mapping for $HOST already exists"
@@ -354,7 +360,7 @@ server.shell(
 set -euo pipefail
 {_radarr_key_block}
 BASE="{RADARR_URL}/api/v3"
-HOST="{SERVER_IP}"
+HOST="{REMOTE}"
 DCS=$(curl -sf -H "X-Api-Key: $RADARR_API" "$BASE/downloadclient")
 if echo "$DCS" | jq -e '.[] | select(.name == "qBittorrent")' > /dev/null; then
   echo "  qBittorrent download client already configured in Radarr"
@@ -477,7 +483,7 @@ server.shell(
 set -euo pipefail
 {_listenarr_key_block}
 BASE="{LISTENARR_URL}/api/v1"
-HOST="{SERVER_IP}"
+HOST="{REMOTE}"
 DCS=$(curl -sf -H "X-Api-Key: $LISTENARR_API" "$BASE/configuration/download-clients")
 if echo "$DCS" | jq -e '.[] | select(.name == "qBittorrent")' > /dev/null; then
   echo "  qBittorrent download client already configured in Listenarr"
@@ -530,11 +536,11 @@ server.shell(
         f"""
 echo ""
 echo "All services configured:"
-echo "  qBittorrent    http://{SERVER_IP}:8080   user: {QBIT_USER}"
-echo "  Sonarr         http://{SERVER_IP}:8989"
-echo "  Radarr         http://{SERVER_IP}:7878"
-echo "  Prowlarr       http://{SERVER_IP}:9696"
-echo "  Listenarr      http://{SERVER_IP}:4545"
+echo "  qBittorrent    http://{REMOTE}:8080   user: {QBIT_USER}"
+echo "  Sonarr         http://{REMOTE}:8989"
+echo "  Radarr         http://{REMOTE}:7878"
+echo "  Prowlarr       http://{REMOTE}:9696"
+echo "  Listenarr      http://{REMOTE}:4545"
 echo ""
 echo "Next: add indexers in Prowlarr -> Indexers -> Add Indexer"
 """,

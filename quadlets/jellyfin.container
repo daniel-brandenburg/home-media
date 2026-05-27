@@ -17,4 +17,4 @@ Network=media_net.network
 Restart=always
 
 [Install]
-WantedBy=default.target
+WantedBy=home-media.target

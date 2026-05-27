@@ -15,9 +15,7 @@ from pyinfra.operations import files, server, zypper
 _packages_txt = os.path.join(os.path.dirname(__file__), "..", "..", "packages.txt")
 with open(_packages_txt) as _f:
     PACKAGES = [
-        line.strip()
-        for line in _f
-        if line.strip() and not line.strip().startswith("#")
+        line.strip() for line in _f if line.strip() and not line.strip().startswith("#")
     ]
 
 zypper.packages(
@@ -36,8 +34,6 @@ PGID = int(os.environ.get("PGID", 1000))
 
 _config_dirs = [
     REMOTE_DIR,
-    f"{REMOTE_DIR}/caddy/data",
-    f"{REMOTE_DIR}/caddy/config",
     f"{REMOTE_DIR}/dashy",
     f"{REMOTE_DIR}/qbittorrent/custom-cont-init.d",
     f"{REMOTE_DIR}/prowlarr",

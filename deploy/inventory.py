@@ -26,30 +26,15 @@ import sys
 try:
     from dotenv import load_dotenv
 
-    load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
-except ImportError:
-    pass  # python-dotenv is optional; rely on real environment variables
+    _env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+    load_dotenv(_env_path)
+except Exception as e:
+    print(f"Warning: failed to load .env: {e}", file=sys.stderr)
 
 # ── Resolve connection target ──────────────────────────────────────────────────
 
-REMOTE = os.environ.get("REMOTE", "")
-if not REMOTE:
-    print(
-        "ERROR: REMOTE is not set.\n"
-        "Set it in your .env file or export it before running pyinfra.\n"
-        "Example: REMOTE=user@mediaserver",
-        file=sys.stderr,
-    )
-    sys.exit(1)
-
-# Parse user@host — allow SSH_USER / SSH_HOST to override individually
-if "@" in REMOTE:
-    _default_user, _default_host = REMOTE.split("@", 1)
-else:
-    _default_user, _default_host = None, REMOTE
-
-ssh_user = os.environ.get("SSH_USER", _default_user)
-ssh_host = os.environ.get("SSH_HOST", _default_host)
+ssh_user = os.environ.get("SSH_USER", "db")
+ssh_host = os.environ.get("REMOTE", "192.168.0.50")
 
 # ── Inventory ──────────────────────────────────────────────────────────────────
 

@@ -2,7 +2,7 @@
 
 This repository is a **self-hosted home media server** infrastructure-as-code project.
 It contains no application code, no package manager, and no test framework.
-The stack is managed via Podman quadlets, Caddy reverse proxy, and systemd.
+The stack is managed via Podman quadlets and systemd.
 Deployment is automated with **pyinfra**.
 
 ---
@@ -24,7 +24,6 @@ Deployment is automated with **pyinfra**.
 .env.example                          # Environment variable template — copy to .env
 packages.txt                          # Host system packages required (e.g. rsync)
 config/
-  caddy/Caddyfile                     # Reverse proxy virtual hosts
   dashy/conf.yml                      # Dashboard layout and service tiles (${SERVER_IP} placeholder)
   qbittorrent/
     custom-cont-init.d/
@@ -39,10 +38,11 @@ deploy/
   deploy.py                           # Main deploy entry point — includes all tasks
   tasks/
     system.py                         # Install packages, create /srv/containers dirs
-    config.py                         # Upload Caddyfile, dashy conf.yml, qbit init, .env
+    tailscale.py                      # Install tailscaled, enable service, optional auth key
+    config.py                         # Upload dashy conf.yml, qbit init, .env
     quadlets.py                       # Upload quadlet files to /etc/containers/systemd/
-    systemd.py                        # Upload systemd units, daemon-reload, enable services
-    firewall.py                       # Open required ports in firewalld
+    systemd.py                        # Upload systemd units (MEDIA_UUID substituted), daemon-reload, enable services
+    firewall.py                       # Open required ports in firewalld (public zone: 6881, 8096; tailscale zone: all UIs)
     arr_setup.py                      # One-time API wiring (*arr + qBittorrent) — run separately
 ```
 
@@ -59,42 +59,45 @@ $EDITOR .env   # fill in REMOTE, SERVER_IP, PUID, PGID, TZ, MEDIA_UUID, QBIT_*, 
 
 ### Deploy (from developer machine, run from repo root)
 
+All pyinfra commands must be run via `uv run` so that the project's virtual environment
+(including `pyinfra` and `python-dotenv`) is used and `.env` is loaded automatically.
+
 ```bash
 # Full deploy: packages + config + quadlets + systemd units + firewall
-pyinfra deploy/inventory.py deploy/deploy.py
+uv run pyinfra deploy/inventory.py deploy/deploy.py
 
 # Deploy only a specific task (e.g. after editing config files):
-pyinfra deploy/inventory.py deploy/tasks/config.py
-pyinfra deploy/inventory.py deploy/tasks/quadlets.py
-pyinfra deploy/inventory.py deploy/tasks/firewall.py
+uv run pyinfra deploy/inventory.py deploy/tasks/config.py
+uv run pyinfra deploy/inventory.py deploy/tasks/quadlets.py
+uv run pyinfra deploy/inventory.py deploy/tasks/firewall.py
 ```
 
 ### One-time arr wiring (run after the stack is up for the first time)
 
 ```bash
 # Fill in API keys in .env first (or leave blank — they will be auto-fetched from the server)
-pyinfra deploy/inventory.py deploy/tasks/arr_setup.py
+uv run pyinfra deploy/inventory.py deploy/tasks/arr_setup.py
 ```
 
 ### Stack management (on the remote server: `ssh user@mediaserver`)
 
 ```bash
-# Start all containers via the grouping target
-systemctl start home-media.target
-
-# Stop all containers
-systemctl stop home-media.target
-
-# View logs for a specific service
-journalctl -u sonarr.service -f
-
 # Restart a single container service
-systemctl restart caddy.service
+systemctl restart sonarr.service
 ```
 
 ### Firewall (on the remote server — MicroOS uses firewalld)
 
-Handled automatically by `deploy/tasks/firewall.py`.  To open an additional port manually:
+Handled automatically by `deploy/tasks/firewall.py`.
+
+**Two-zone strategy:**
+- `public` zone: only BitTorrent peer traffic (6881) and Jellyfin LAN streaming (8096).
+- `tailscale` zone: all admin web UIs — only reachable via Tailscale (`tailscale0` interface).
+
+Tailscale must be installed and `tailscale up` run before deploying the firewall task for the
+`tailscale0` interface assignment to take effect.
+
+To open an additional port manually:
 
 ```bash
 sudo firewall-cmd --permanent --add-port=<PORT>/tcp
@@ -111,7 +114,6 @@ There is no compiled code, no test framework, and no linter. Validation is manua
 
 | Service      | Image                                  | Internal Port | `.home` URL           |
 |--------------|----------------------------------------|---------------|-----------------------|
-| Caddy        | `caddy:latest`                         | 80, 443       | (reverse proxy)       |
 | Dashy        | `ghcr.io/lissy93/dashy:latest`         | 8081          | `dash.home`           |
 | Prowlarr     | `lscr.io/linuxserver/prowlarr:latest`  | 9696          | `prowlarr.home`       |
 | FlareSolverr | `ghcr.io/flaresolverr/flaresolverr:latest` | 8191      | (internal only)       |
@@ -125,7 +127,7 @@ There is no compiled code, no test framework, and no linter. Validation is manua
 | Ebook Handoff | `alpine:3.20`                         | (none)        | (internal only)       |
 
 All containers share the `media_net` bridge network and discover each other by container name
-(e.g. `http://sonarr:8989`, `reverse_proxy jellyfin:8096`).
+(e.g. `http://sonarr:8989`).
 
 ---
 

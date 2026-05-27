@@ -3,9 +3,9 @@ Description=Mount External Media Drive to /srv/media
 After=network.target
 
 [Mount]
-# Replace with the UUID of your exFAT drive.
-# Find it with: blkid /dev/sdX   (e.g. blkid /dev/sda1)
-What=/dev/disk/by-uuid/XXXX-XXXX
+# UUID is substituted from MEDIA_UUID in .env at deploy time by tasks/systemd.py.
+# Find yours with: blkid /dev/sdX   (e.g. blkid /dev/sda1)
+What=/dev/disk/by-uuid/${MEDIA_UUID}
 Where=/srv/media
 Type=exfat
 # uid/gid must match the user that runs the containers (check with: id)

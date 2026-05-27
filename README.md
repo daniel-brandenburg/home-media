@@ -6,21 +6,21 @@ Podman quadlets, Caddy, and systemd.  Deployment is automated with **pyinfra**.
 
 ## Stack
 
-| Service          | Image                                              | Port   | Local URL             |
-|------------------|----------------------------------------------------|--------|-----------------------|
-| Caddy            | `caddy:latest`                                     | 80/443 | (reverse proxy)       |
-| Dashy            | `ghcr.io/lissy93/dashy:latest`                     | 8081   | `dash.home`           |
-| Jellyfin         | `lscr.io/linuxserver/jellyfin:latest`              | 8096   | `jellyfin.home`       |
-| Audiobookshelf   | `ghcr.io/advplyr/audiobookshelf:latest`            | 13378  | `audiobooks.home`     |
-| Sonarr           | `lscr.io/linuxserver/sonarr:latest`                | 8989   | `sonarr.home`         |
-| Radarr           | `lscr.io/linuxserver/radarr:latest`                | 7878   | `radarr.home`         |
-| Listenarr        | `ghcr.io/listenarrs/listenarr:canary`              | 4545   | `listenarr.home`      |
-| qBittorrent      | `lscr.io/linuxserver/qbittorrent:latest`           | 8080   | `qbit.home`           |
-| Prowlarr         | `lscr.io/linuxserver/prowlarr:latest`              | 9696   | `prowlarr.home`       |
-| FlareSolverr     | `ghcr.io/flaresolverr/flaresolverr:latest`         | 8191   | (internal only)       |
-| Calibre-Web      | `crocodilestick/calibre-web-automated:latest`      | 8083   | `ebooks.home`         |
-| Shelfmark        | `ghcr.io/calibrain/shelfmark-lite:latest`          | 8084   | `shelfmark.home`      |
-| Ebook Handoff    | `alpine:3.20`                                      | —      | (internal only)       |
+| Service          | systemd unit                          | Image                                              | Port   | Local URL             |
+|------------------|---------------------------------------|----------------------------------------------------|--------|-----------------------|
+| Caddy            | `caddy.service`                       | `caddy:latest`                                     | 80/443 | (reverse proxy)       |
+| Dashy            | `dashy.service`                       | `ghcr.io/lissy93/dashy:latest`                     | 8081   | `dash.home`           |
+| Jellyfin         | `jellyfin.service`                    | `lscr.io/linuxserver/jellyfin:latest`              | 8096   | `jellyfin.home`       |
+| Audiobookshelf   | `audiobookshelf.service`              | `ghcr.io/advplyr/audiobookshelf:latest`            | 13378  | `audiobooks.home`     |
+| Sonarr           | `sonarr.service`                      | `lscr.io/linuxserver/sonarr:latest`                | 8989   | `sonarr.home`         |
+| Radarr           | `radarr.service`                      | `lscr.io/linuxserver/radarr:latest`                | 7878   | `radarr.home`         |
+| Listenarr        | `listenarr.service`                   | `ghcr.io/listenarrs/listenarr:canary`              | 4545   | `listenarr.home`      |
+| qBittorrent      | `qbittorrent.service`                 | `lscr.io/linuxserver/qbittorrent:latest`           | 8080   | `qbit.home`           |
+| Prowlarr         | `prowlarr.service`                    | `lscr.io/linuxserver/prowlarr:latest`              | 9696   | `prowlarr.home`       |
+| FlareSolverr     | `flaresolverr.service`                | `ghcr.io/flaresolverr/flaresolverr:latest`         | 8191   | (internal only)       |
+| Calibre-Web      | `calibre-web-automated.service`       | `crocodilestick/calibre-web-automated:latest`      | 8083   | `ebooks.home`         |
+| Shelfmark        | `shelfmark.service`                   | `ghcr.io/calibrain/shelfmark-lite:latest`          | 8084   | `shelfmark.home`      |
+| Ebook Handoff    | `ebook-handoff.service`               | `alpine:3.20`                                      | —      | (internal only)       |
 
 All services share the `media_net` bridge network and discover each other by container name.
 Local `.home` DNS names are resolved by your LAN DNS (e.g. Pi-hole or router DNS overrides).
@@ -56,9 +56,7 @@ deploy/
 ## Prerequisites
 
 **Developer machine** (where you edit and deploy from):
-- Python 3.11+
-- `pyinfra` (`pip install pyinfra` or `uv tool install pyinfra`)
-- `python-dotenv` (optional — `pip install python-dotenv` — enables auto-loading `.env`)
+- [uv](https://docs.astral.sh/uv/) — manages the Python environment and dependencies
 - SSH access to the server
 
 **Server** (OpenSUSE MicroOS or similar):
@@ -83,8 +81,11 @@ Fill in at minimum: `REMOTE`, `SERVER_IP`, `PUID`/`PGID`, `TZ`, `MEDIA_UUID`, `Q
 From the **repo root**:
 
 ```bash
-pyinfra deploy/inventory.py deploy/deploy.py
+uv run pyinfra deploy/inventory.py deploy/deploy.py
 ```
+
+`uv run` automatically creates a virtual environment and installs all dependencies
+declared in `pyproject.toml` (including `pyinfra` and `python-dotenv`) before running.
 
 This will (in order):
 1. Install required host packages
@@ -99,7 +100,7 @@ This will (in order):
 After all containers are healthy, run the arr setup task:
 
 ```bash
-pyinfra deploy/inventory.py deploy/tasks/arr_setup.py
+uv run pyinfra deploy/inventory.py deploy/tasks/arr_setup.py
 ```
 
 This configures:
@@ -121,10 +122,10 @@ added indexers to Sonarr and Radarr.
 
 ```bash
 # Push only updated config files
-pyinfra deploy/inventory.py deploy/tasks/config.py
+uv run pyinfra deploy/inventory.py deploy/tasks/config.py
 
 # Push only updated quadlets (then restart affected services on the server)
-pyinfra deploy/inventory.py deploy/tasks/quadlets.py
+uv run pyinfra deploy/inventory.py deploy/tasks/quadlets.py
 ```
 
 ### Stack management (on the server)
