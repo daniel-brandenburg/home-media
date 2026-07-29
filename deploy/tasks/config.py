@@ -10,7 +10,8 @@ Uploads:
       → REMOTE_DIR/qbittorrent/qBittorrent/qBittorrent.conf
       WebUI username and PBKDF2 password hash are injected at deploy time
       from QBIT_USER / QBIT_PASS in .env (plaintext password never sent).
-      qbittorrent.service is stopped before upload and started after.
+      qbittorrent.service is stopped before upload; systemd.py starts it
+      after daemon-reload so the conf is not overwritten on shutdown.
   - .env (root)                    → REMOTE_DIR/.env
       (quadlet EnvironmentFile= reads this at container start)
 """
@@ -25,16 +26,16 @@ from pyinfra.operations import files, systemd
 
 def _qbit_pbkdf2_hash(password: str) -> str:
     """
-    Generate a qBittorrent-compatible PBKDF2-SHA1 password hash.
+    Generate a qBittorrent-compatible PBKDF2-SHA512 password hash.
 
     qBittorrent stores passwords as:
         @ByteArray(<base64_salt>:<base64_dk>)
-    using PBKDF2-HMAC-SHA1, 100 000 iterations, 16-byte salt, 32-byte key.
+    using PBKDF2-HMAC-SHA512, 100 000 iterations, 16-byte salt, 64-byte key.
     The hash is computed locally so the plaintext password is never written
     to any file that is sent to the server.
     """
     salt = os.urandom(16)
-    dk = hashlib.pbkdf2_hmac("sha1", password.encode(), salt, 100_000, dklen=32)
+    dk = hashlib.pbkdf2_hmac("sha512", password.encode(), salt, 100_000, dklen=64)
     encoded = f"{base64.b64encode(salt).decode()}:{base64.b64encode(dk).decode()}"
     return f"@ByteArray({encoded})"
 
@@ -86,15 +87,18 @@ with open(_qbit_conf_src) as _f:
 
 if _qbit_user and _qbit_pass:
     _qbit_hash = _qbit_pbkdf2_hash(_qbit_pass)
-    # Inject (or replace) Username and Password_PBKDF2 under [Preferences]
+
+    # Remove any existing Username / Password lines (however they were written)
     import re as _re
-    _qbit_conf = _re.sub(r"^WebUI\\Username=.*$", f"WebUI\\\\Username={_qbit_user}", _qbit_conf, flags=_re.MULTILINE)
-    _qbit_conf = _re.sub(r"^WebUI\\Password_PBKDF2=.*$", f"WebUI\\\\Password_PBKDF2={_qbit_hash}", _qbit_conf, flags=_re.MULTILINE)
-    # If neither key existed yet, append them
-    if "WebUI\\Username" not in _qbit_conf:
-        _qbit_conf += f"\nWebUI\\Username={_qbit_user}\n"
-    if "WebUI\\Password_PBKDF2" not in _qbit_conf:
-        _qbit_conf += f"WebUI\\Password_PBKDF2={_qbit_hash}\n"
+    _qbit_conf = _re.sub(r"^WebUI\\Username=.*\n?", "", _qbit_conf, flags=_re.MULTILINE)
+    _qbit_conf = _re.sub(r"^WebUI\\Password_PBKDF2=.*\n?", "", _qbit_conf, flags=_re.MULTILINE)
+
+    # Insert the credentials immediately after the [Preferences] section header
+    _creds = f'WebUI\\Username={_qbit_user}\nWebUI\\Password_PBKDF2="{_qbit_hash}"\n'
+    if "[Preferences]" in _qbit_conf:
+        _qbit_conf = _qbit_conf.replace("[Preferences]\n", f"[Preferences]\n{_creds}", 1)
+    else:
+        _qbit_conf += f"\n[Preferences]\n{_creds}"
 else:
     print(
         "WARNING: QBIT_USER or QBIT_PASS not set — uploading qBittorrent.conf without credentials.\n"
@@ -114,11 +118,9 @@ files.put(
     mode="600",
 )
 
-systemd.service(
-    name="Start qbittorrent after config upload",
-    service="qbittorrent.service",
-    running=True,
-)
+# Do NOT start qbittorrent here — systemd.py starts home-media.target which
+# brings up all containers.  Starting it here would cause qBittorrent to write
+# its config on shutdown and potentially overwrite the credentials we just uploaded.
 
 # ── .env (runtime environment for quadlet EnvironmentFile=) ───────────────────
 _env_file = os.path.join(_repo_root, ".env")

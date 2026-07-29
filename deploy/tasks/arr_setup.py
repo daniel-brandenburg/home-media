@@ -1,12 +1,16 @@
 """
-tasks/arr_setup.py — one-time API wiring for *arr services + qBittorrent
+tasks/arr_setup.py — API wiring for *arr services + qBittorrent
 
-Configures qBittorrent, Sonarr, Radarr, Prowlarr, and Listenarr to work
-together.  Run this once after the stack is up for the first time.
-All operations are idempotent — safe to re-run.
+Waits for each service to become ready, then configures qBittorrent, Sonarr,
+Radarr, Prowlarr to work together.
+All operations are idempotent — safe to re-run and included in the main deploy.
 
 Usage
 -----
+    # Included automatically in the full deploy:
+    pyinfra deploy/inventory.py deploy/deploy.py
+
+    # Or run standalone (e.g. to re-wire after an API key change):
     pyinfra deploy/inventory.py deploy/tasks/arr_setup.py
 
 Environment variables (from .env or real env)
@@ -23,7 +27,6 @@ qBittorrent:
     SONARR_API
     RADARR_API
     PROWLARR_API
-    LISTENARR_API
 """
 
 import os
@@ -66,13 +69,34 @@ REMOTE_DIR = os.environ.get("REMOTE_DIR", "/srv/containers")
 QBIT_URL = f"http://{REMOTE}:8080"
 SONARR_URL = f"http://{REMOTE}:8989"
 RADARR_URL = f"http://{REMOTE}:7878"
-LISTENARR_URL = f"http://{REMOTE}:4545"
 
 # API keys — if blank, auto-fetch via SSH from the app's config file on the server
 SONARR_API = os.environ.get("SONARR_API", "")
 RADARR_API = os.environ.get("RADARR_API", "")
 PROWLARR_API = os.environ.get("PROWLARR_API", "")
-LISTENARR_API = os.environ.get("LISTENARR_API", "")
+
+
+def _wait_for_url(url: str, label: str, attempts: int = 60, interval: int = 5) -> str:
+    """
+    Shell fragment that polls `url` until it returns any HTTP response,
+    retrying up to `attempts` times with `interval` seconds between tries.
+    Uses curl without -f so that 4xx responses (e.g. 403 on auth-protected
+    endpoints) still count as "ready".
+    Aborts with a clear error if the service never becomes ready.
+    """
+    return f"""
+echo "Waiting for {label} to be ready..."
+for i in $(seq 1 {attempts}); do
+  if curl -s --max-time 3 -o /dev/null -w "%{{http_code}}" "{url}" 2>/dev/null | grep -qE '^[0-9]{{3}}$'; then
+    echo "  {label} ready (attempt $i)"
+    break
+  fi
+  if [[ $i -eq {attempts} ]]; then
+    echo "ERROR: {label} did not become ready after {attempts} attempts ({attempts * interval}s)." >&2; exit 1
+  fi
+  sleep {interval}
+done
+"""
 
 
 def _fetch_xml_api_key(config_path: str) -> str:
@@ -99,17 +123,7 @@ QBIT_USER="{QBIT_USER}"
 QBIT_PASS="{QBIT_PASS}"
 COOKIE="{_qbit_cookie}"
 
-echo "Waiting for qBittorrent WebUI..."
-for i in $(seq 1 30); do
-  if curl -sf "$QBIT_URL/api/v2/app/version" > /dev/null 2>&1; then
-    echo "  WebUI ready (attempt $i)"
-    break
-  fi
-  if [[ $i -eq 30 ]]; then
-    echo "ERROR: qBittorrent WebUI did not become ready after 30 attempts." >&2; exit 1
-  fi
-  sleep 2
-done
+{_wait_for_url(f"{QBIT_URL}/api/v2/app/version", "qBittorrent")}
 
 body=$(curl -s -c "$COOKIE" --data "username=$QBIT_USER&password=$QBIT_PASS" \\
   -H "Referer: $QBIT_URL" "$QBIT_URL/api/v2/auth/login")
@@ -187,13 +201,15 @@ _prowlarr_key_block = _api_key_shell_var(
     PROWLARR_API,
     _fetch_xml_api_key(f"{REMOTE_DIR}/prowlarr/config.xml"),
 )
-_listenarr_key_block = _api_key_shell_var(
-    "LISTENARR_API",
-    LISTENARR_API,
-    _fetch_json_api_key(f"{REMOTE_DIR}/listenarr/config.json"),
-)
 
 # ── Sonarr ────────────────────────────────────────────────────────────────────
+
+server.shell(
+    name="Sonarr: wait for API to be ready",
+    commands=[
+        f"set -euo pipefail\n{_wait_for_url(f'{SONARR_URL}/api/v3/system/status', 'Sonarr')}"
+    ],
+)
 
 server.shell(
     name="Sonarr: configure media management (hardlinks + rename)",
@@ -293,6 +309,13 @@ fi
 )
 
 # ── Radarr ────────────────────────────────────────────────────────────────────
+
+server.shell(
+    name="Radarr: wait for API to be ready",
+    commands=[
+        f"set -euo pipefail\n{_wait_for_url(f'{RADARR_URL}/api/v3/system/status', 'Radarr')}"
+    ],
+)
 
 server.shell(
     name="Radarr: configure media management (hardlinks + rename)",
@@ -397,6 +420,13 @@ fi
 # which already runs over SSH — no extra SSH hop needed.
 
 server.shell(
+    name="Prowlarr: wait for API to be ready",
+    commands=[
+        f"set -euo pipefail\n{_wait_for_url('http://localhost:9696/api/v1/system/status', 'Prowlarr')}"
+    ],
+)
+
+server.shell(
     name="Prowlarr: register Sonarr as an application",
     commands=[
         f"""
@@ -474,60 +504,6 @@ fi
     ],
 )
 
-# ── Listenarr ─────────────────────────────────────────────────────────────────
-
-server.shell(
-    name="Listenarr: ensure qBittorrent download client",
-    commands=[
-        f"""
-set -euo pipefail
-{_listenarr_key_block}
-BASE="{LISTENARR_URL}/api/v1"
-HOST="{REMOTE}"
-DCS=$(curl -sf -H "X-Api-Key: $LISTENARR_API" "$BASE/configuration/download-clients")
-if echo "$DCS" | jq -e '.[] | select(.name == "qBittorrent")' > /dev/null; then
-  echo "  qBittorrent download client already configured in Listenarr"
-else
-  RESULT=$(curl -sf -X POST -H "X-Api-Key: $LISTENARR_API" -H "Content-Type: application/json" \\
-    -d "{{
-      \\"name\\": \\"qBittorrent\\",
-      \\"type\\": \\"qbittorrent\\",
-      \\"host\\": \\"$HOST\\",
-      \\"port\\": 8080,
-      \\"username\\": \\"{QBIT_USER}\\",
-      \\"password\\": \\"{QBIT_PASS}\\",
-      \\"downloadPath\\": \\"/downloads\\",
-      \\"isEnabled\\": true,
-      \\"removeCompletedDownloads\\": \\"none\\",
-      \\"settings\\": {{\\"category\\": \\"audiobooks\\"}}
-    }}" "$BASE/configuration/download-clients")
-  echo "$RESULT" | jq -e '.id' > /dev/null || {{ echo "ERROR: $RESULT" >&2; exit 1; }}
-  echo "$RESULT" | jq -r '"  Added download client: " + .id'
-fi
-""",
-    ],
-)
-
-server.shell(
-    name="Listenarr: ensure root folder /audiobooks",
-    commands=[
-        f"""
-set -euo pipefail
-{_listenarr_key_block}
-BASE="{LISTENARR_URL}/api/v1"
-ROOTS=$(curl -sf -H "X-Api-Key: $LISTENARR_API" "$BASE/rootfolders")
-if echo "$ROOTS" | jq -e '.[] | select(.path == "/audiobooks")' > /dev/null; then
-  echo "  Root folder /audiobooks already exists"
-else
-  RESULT=$(curl -sf -X POST -H "X-Api-Key: $LISTENARR_API" -H "Content-Type: application/json" \\
-    -d '{{"name":"Audiobooks","path":"/audiobooks","isDefault":true}}' "$BASE/rootfolders")
-  echo "$RESULT" | jq -e '.id' > /dev/null || {{ echo "ERROR: $RESULT" >&2; exit 1; }}
-  echo "$RESULT" | jq -r '"  Added root folder: " + .path'
-fi
-""",
-    ],
-)
-
 # ── Done ──────────────────────────────────────────────────────────────────────
 
 server.shell(
@@ -540,7 +516,6 @@ echo "  qBittorrent    http://{REMOTE}:8080   user: {QBIT_USER}"
 echo "  Sonarr         http://{REMOTE}:8989"
 echo "  Radarr         http://{REMOTE}:7878"
 echo "  Prowlarr       http://{REMOTE}:9696"
-echo "  Listenarr      http://{REMOTE}:4545"
 echo ""
 echo "Next: add indexers in Prowlarr -> Indexers -> Add Indexer"
 """,
