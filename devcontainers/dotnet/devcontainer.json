@@ -1,0 +1,25 @@
+{
+  "name": ".NET agent sandbox",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "args": {
+      "TZ": "${localEnv:TZ:Etc/UTC}"
+    }
+  },
+  "runArgs": [
+    "--cap-add=NET_ADMIN",
+    "--cap-add=NET_RAW"
+  ],
+  "remoteUser": "agent",
+  "mounts": [
+    "source=agent-claude-config,target=/home/agent/.claude,type=volume",
+    "source=agent-kimi-config,target=/home/agent/.kimi-code,type=volume",
+    "source=agent-gh-config,target=/home/agent/.config/gh,type=volume"
+  ],
+  "containerEnv": {
+    "DOTNET_CLI_TELEMETRY_OPTOUT": "1"
+  },
+  "postCreateCommand": "mkdir -p /home/agent/.claude && ([ -e /home/agent/.claude.json ] && [ ! -L /home/agent/.claude.json ] && mv /home/agent/.claude.json /home/agent/.claude/.claude.json || true) && ln -sf /home/agent/.claude/.claude.json /home/agent/.claude.json && git clone --depth 1 https://github.com/daniel-brandenburg/.dotfiles.git /home/agent/.dotfiles && mkdir -p /home/agent/.agents && ln -sfn /home/agent/.dotfiles/.agents/skills /home/agent/.claude/skills && ln -sfn /home/agent/.dotfiles/.agents/skills /home/agent/.agents/skills",
+  "postStartCommand": "sudo /usr/local/bin/init-firewall.sh",
+  "waitFor": "postStartCommand"
+}

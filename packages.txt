@@ -1,2 +1,4 @@
 rsync
+git
+gh
 

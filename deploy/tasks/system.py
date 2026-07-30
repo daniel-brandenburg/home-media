@@ -8,7 +8,18 @@ Ensures the server has the required packages installed and that all
 import os
 
 from pyinfra import host
-from pyinfra.operations import files, server, zypper
+from pyinfra.facts.rpm import RpmPackages
+from pyinfra.operations import files, server
+
+# ── Remove stale Tailscale zypper repo (leftover from before Tailscale was
+# dropped from this project) — its untrusted GPG key makes every zypper
+# refresh fail, which blocks transactional-update package installs below.
+server.shell(
+    name="zypper: remove stale Tailscale repository",
+    commands=[
+        "zypper --non-interactive removerepo tailscale-stable || true",
+    ],
+)
 
 # ── Required host packages ──────────────────────────────────────────────────────
 # Read from packages.txt at the repo root (one package per line, # comments ok)
@@ -18,11 +29,26 @@ with open(_packages_txt) as _f:
         line.strip() for line in _f if line.strip() and not line.strip().startswith("#")
     ]
 
-zypper.packages(
-    name="Install required host packages",
-    packages=PACKAGES,
-    present=True,
-)
+# The host is an openSUSE transactional-server (MicroOS/Aeon): the root
+# filesystem is read-only, so plain `zypper install` always fails with
+# "please use transactional-update". Packages must be installed into a new
+# btrfs snapshot via `transactional-update`, which only becomes active after
+# a reboot.
+_installed = host.get_fact(RpmPackages)
+_missing_packages = [p for p in PACKAGES if p not in _installed]
+
+if _missing_packages:
+    server.shell(
+        name=f"Install missing host packages via transactional-update: {', '.join(_missing_packages)}",
+        commands=[
+            f"transactional-update --non-interactive pkg install {' '.join(_missing_packages)}"
+        ],
+    )
+    server.reboot(
+        name="Reboot to activate new transactional-update snapshot",
+        delay=60,
+        reboot_timeout=600,
+    )
 
 # ── Directory structure on the server ──────────────────────────────────────────
 # /srv/containers/<service>  — quadlet EnvironmentFile and per-service config

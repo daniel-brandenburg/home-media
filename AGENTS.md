@@ -29,6 +29,19 @@ config/
     custom-cont-init.d/
       99-webui-proxy.sh               # qBittorrent WebUI proxy settings patch
 quadlets/                             # Podman quadlet unit files (*.container, *.network)
+devcontainers/                        # Per-project devcontainer templates (see below)
+  dotnet/
+    devcontainer.json                 # .NET agent sandbox: build config, firewall capabilities, mounts
+    Dockerfile                        # .NET SDK 8.0 image, non-root "agent" user, Claude/Kimi installed
+    init-firewall.sh                  # Default-deny egress firewall (iptables/ipset), run per container
+  flutter/
+    devcontainer.json                 # Flutter agent sandbox: build config, firewall capabilities, mounts
+    Dockerfile                        # Ubuntu + Dart/Flutter SDK (stable, no Android SDK), Claude/Kimi installed
+    init-firewall.sh                  # Default-deny egress firewall, allowlists pub.dev + storage.googleapis.com
+  cpp/
+    devcontainer.json                 # C/C++ agent sandbox: build config, firewall capabilities, mounts
+    Dockerfile                        # Debian + gcc/clang/cmake/gdb/valgrind, non-root "agent" user, Claude/Kimi installed
+    init-firewall.sh                  # Default-deny egress firewall (iptables/ipset), run per container
 systemd/
   home-media.target                   # systemd target: groups all container services
   srv-media.mount                     # systemd unit: mount external drive
@@ -38,11 +51,11 @@ deploy/
   deploy.py                           # Main deploy entry point — includes all tasks
   tasks/
     system.py                         # Install packages, create /srv/containers dirs
-    tailscale.py                      # Install tailscaled, enable service, optional auth key
     config.py                         # Upload dashy conf.yml, qbit init, .env
     quadlets.py                       # Upload quadlet files to /etc/containers/systemd/
+    devcontainers.py                  # Upload devcontainers/ templates (recursive) to REMOTE_DIR
     systemd.py                        # Upload systemd units (MEDIA_UUID substituted), daemon-reload, enable services
-    firewall.py                       # Open required ports in firewalld (public zone: 6881, 8096; tailscale zone: all UIs)
+    firewall.py                       # Open required ports in firewalld (public zone: 6881, 8096, admin UIs)
     arr_setup.py                      # One-time API wiring (*arr + qBittorrent) — run separately
 ```
 
@@ -69,6 +82,7 @@ uv run pyinfra deploy/inventory.py deploy/deploy.py
 # Deploy only a specific task (e.g. after editing config files):
 uv run pyinfra deploy/inventory.py deploy/tasks/config.py
 uv run pyinfra deploy/inventory.py deploy/tasks/quadlets.py
+uv run pyinfra deploy/inventory.py deploy/tasks/devcontainers.py
 uv run pyinfra deploy/inventory.py deploy/tasks/firewall.py
 ```
 
@@ -90,12 +104,8 @@ systemctl restart sonarr.service
 
 Handled automatically by `deploy/tasks/firewall.py`.
 
-**Two-zone strategy:**
-- `public` zone: only BitTorrent peer traffic (6881) and Jellyfin LAN streaming (8096).
-- `tailscale` zone: all admin web UIs — only reachable via Tailscale (`tailscale0` interface).
-
-Tailscale must be installed and `tailscale up` run before deploying the firewall task for the
-`tailscale0` interface assignment to take effect.
+**Single-zone strategy:**
+- `public` zone: BitTorrent peer traffic (6881), Jellyfin LAN streaming (8096), and all admin web UIs.
 
 To open an additional port manually:
 
@@ -107,6 +117,99 @@ sudo firewall-cmd --reload
 ### No build, lint, or test commands
 
 There is no compiled code, no test framework, and no linter. Validation is manual.
+
+---
+
+## Coding Agent Sandbox
+
+Uses the [Dev Container spec](https://containers.dev/) instead of a hand-rolled quadlet stack —
+each project gets its own container, built from a template in `devcontainers/`, with only the
+toolchain that project needs.
+
+### How it works
+
+- `devcontainers/<stack>/` holds a reusable template (`devcontainer.json` + `Dockerfile` +
+  `init-firewall.sh`) — not tied to any one project repo.
+- Templates are **not** copied into each project. [devpod](https://github.com/loft-sh/devpod)'s
+  `--devcontainer-path` flag points at the template directly, so `devcontainers/dotnet/` can be
+  reused for every .NET repo under `/srv/repos` without modification.
+- Each container runs as a non-root `agent` user (uid/gid 1000), mounts the target repo (via the
+  CLI's normal workspace mount, at `/workspaces/<repo-name>`), and enforces a default-deny egress
+  firewall (iptables/ipset, adapted from
+  [Anthropic's reference devcontainer](https://github.com/anthropics/claude-code/blob/main/.devcontainer/init-firewall.sh))
+  instead of a shared proxy container — allowlisting only GitHub, the Claude/Kimi APIs, and
+  whatever package registry the stack needs (NuGet for .NET, etc).
+- Claude Code, Kimi Code, and GitHub CLI (`gh`) auth persist across every project via three fixed
+  named volumes (`agent-claude-config`, `agent-kimi-config`, `agent-gh-config`) shared by all
+  templates — log in once, reuse everywhere. `gh` itself is installed from GitHub's own apt repo
+  (not in Debian's default repos); no firewall changes were needed since `api.github.com` /
+  `github.com` were already allowlisted via GitHub's `/meta` IP ranges.
+  - `~/.claude.json` (a file, not inside `.claude/`) is symlinked into the `.claude` volume by
+    `postCreateCommand` so it persists too — Claude Code writes there directly, not just under
+    `.claude/`.
+  - Kimi's volume mounts at `/home/agent/.kimi-code`, matching where its installer actually put
+    the binary/config — not `/home/agent/.kimi`.
+- `postCreateCommand` also git-clones `github.com/daniel-brandenburg/.dotfiles` fresh on every
+  container creation (not persisted — the repo itself is the source of truth) and symlinks its
+  `.agents/skills` into both `~/.claude/skills` and `~/.agents/skills`.
+
+### Prerequisites (one-time, on the server)
+
+- Podman (already installed for the media stack).
+- devpod CLI — a static Go binary installed to `/usr/local/bin/devpod` by
+  `deploy/tasks/devcontainers.py` (pinned version + sha256 in that file). No Node/npm or zypper
+  package needed, which sidesteps this host's transactional-server package-install path entirely.
+- The devcontainer templates themselves, synced to `REMOTE_DIR/devcontainers/` by the same task
+  (part of the full deploy, or run standalone — see Deploy above).
+
+### Spinning up a project
+
+Templates live on the server at `REMOTE_DIR/devcontainers/<stack>/` (default
+`/srv/containers/devcontainers/<stack>/`) once deployed — reference that path, not this repo's
+local `devcontainers/` copy.
+
+**`--devcontainer-path` is always resolved relative to the workspace folder, even if you pass an
+absolute path** (devpod naively joins them — confirmed against v0.6.15) — so with the default
+`/srv/repos/<project>` and `/srv/containers` layout (siblings under `/srv`), use `../../containers/...`:
+
+`--ide none` skips devpod's default behavior of opening a browser-based VS Code — without it, `up`
+starts a local port-forward and idles waiting for someone to open it, then times out
+(`EXIT_AFTER_TIMEOUT`, default 3 min); harmless, but the container is already up by then anyway —
+just `devpod ssh` in directly regardless:
+
+```bash
+devpod up /srv/repos/<your-dotnet-project> \
+  --provider docker \
+  --devcontainer-path ../../containers/devcontainers/dotnet/devcontainer.json \
+  --ide none
+
+# then attach:
+devpod ssh /srv/repos/<your-dotnet-project>
+```
+
+Devpod's `docker` provider shells out to whatever's on `$PATH` named `docker`/`podman`-compatible;
+point it at podman explicitly with `devpod provider add docker --option DOCKER_PATH=podman` once,
+or set `DOCKER_PATH=podman` in the environment before `devpod up`.
+
+First run inside: `claude login` / Kimi's equivalent / `gh auth login` — one-time each, since the
+config volumes persist. `gh auth login` has no browser in the container; use its device-code flow
+(`gh auth login --hostname github.com --git-protocol https --web`, then open the printed URL/code
+on another device) or `gh auth login --with-token < token-file` with a PAT.
+
+### Caveats
+
+- **Kimi Code's runtime API domain(s) are unconfirmed** in `init-firewall.sh` — only its installer
+  host (`code.kimi.com`) is verified. Watch for connection failures after login and add whatever
+  domain the CLI actually talks to.
+- **The `up`/`exec` commands above are untested against this repo's actual Podman version** — the
+  Dev Container CLI's Podman support (`--docker-path podman`) is less exercised than its Docker
+  path; verify `up` succeeds before relying on it.
+- `dotnet/`, `flutter/`, and `cpp/` templates exist. The `flutter/` template deliberately omits
+  the Android SDK/Gradle — that toolchain pulls from Google Maven, the Gradle plugin portal, and
+  `dl.google.com`, which is a much wider (and harder to keep tight) runtime firewall allowlist than
+  this default-deny setup aims for. It covers `flutter analyze`/`test`/`build web`/`build linux`,
+  not `flutter build apk`/`appbundle`. An Android-SDK variant is still to do if mobile builds are
+  needed.
 
 ---
 
