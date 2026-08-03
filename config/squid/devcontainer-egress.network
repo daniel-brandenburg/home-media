@@ -1,0 +1,6 @@
+[Network]
+Driver=bridge
+# Fixed (not auto-assigned) so squid.conf's devcontainer_net source ACL has a
+# stable range to match against.
+Subnet=10.89.1.0/24
+Gateway=10.89.1.1

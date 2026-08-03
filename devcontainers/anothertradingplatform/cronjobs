@@ -1,0 +1,2 @@
+0 2 * * 1-6 /home/ubuntu/cronscripts/daily_pr_review.sh >> /home/ubuntu/cronlogs/daily_pr_review.log 2>&1
+0 2 * * 0 /home/ubuntu/cronscripts/weekly_review.sh >> /home/ubuntu/cronlogs/weekly_review.log 2>&1

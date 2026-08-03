@@ -12,6 +12,9 @@ Uploads:
       from QBIT_USER / QBIT_PASS in .env (plaintext password never sent).
       qbittorrent.service is stopped before upload; systemd.py starts it
       after daemon-reload so the conf is not overwritten on shutdown.
+  - config/squid/squid.conf          → REMOTE_DIR/squid/squid.conf
+      (the matching rootless quadlet config/squid/squid.container is deployed
+      by devcontainers.py into the devcontainer user's ~/.config/containers/systemd/)
   - .env (root)                    → REMOTE_DIR/.env
       (quadlet EnvironmentFile= reads this at container start)
 """
@@ -21,7 +24,7 @@ import base64
 import io
 import os
 
-from pyinfra.operations import files, systemd
+from pyinfra.operations import files, server, systemd
 
 
 def _qbit_pbkdf2_hash(password: str) -> str:
@@ -69,6 +72,34 @@ files.put(
     ),
     dest=f"{REMOTE_DIR}/qbittorrent/custom-cont-init.d/99-webui-proxy.sh",
     mode="755",
+)
+
+# ── Squid egress proxy config ──────────────────────────────────────────────────
+files.put(
+    name="Upload Squid egress proxy config",
+    src=os.path.join(_config_dir, "squid", "squid.conf"),
+    dest=f"{REMOTE_DIR}/squid/squid.conf",
+    mode="644",
+)
+
+# SELinux is enforcing on this host. The Squid quadlet (deploy/tasks/devcontainers.py)
+# runs rootless as the devcontainer user, which lacks CAP_MAC_ADMIN and so can't
+# relabel this bind mount itself (that's why its Volume= line has no :Z — attempting
+# it there fails with "lsetxattr ... operation not permitted"). Root has the
+# capability, and this task already runs as root (_sudo=True in inventory.py), so
+# label it here instead.
+#
+# Explicit "-l s0" (no MCS categories) matters: without :Z, Podman still hands
+# the container process its own random per-run MCS category pair, but never
+# touches the file's label to match it (that pairing-up is exactly what :Z
+# would normally coordinate). A file labeled with SOME fixed category pair
+# (e.g. left over from a prior manual chcon) will only satisfy MCS dominance
+# if it happens to match that run's random pair — which it won't. A bare "s0"
+# (empty category set) is trivially dominated by any category set, so any
+# container_t process can read it regardless of its own random categories.
+server.shell(
+    name="Label Squid config container_file_t:s0 for SELinux (rootless quadlet can't self-relabel)",
+    commands=[f"chcon -l s0 -t container_file_t {REMOTE_DIR}/squid/squid.conf"],
 )
 
 # ── qBittorrent main config ───────────────────────────────────────────────────

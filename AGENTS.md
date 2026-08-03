@@ -25,23 +25,25 @@ Deployment is automated with **pyinfra**.
 packages.txt                          # Host system packages required (e.g. rsync)
 config/
   dashy/conf.yml                      # Dashboard layout and service tiles (${SERVER_IP} placeholder)
+  squid/
+    squid.conf                        # Egress proxy ACLs for agent devcontainers
+    squid.container                   # Rootless user quadlet for the Squid proxy
   qbittorrent/
     custom-cont-init.d/
       99-webui-proxy.sh               # qBittorrent WebUI proxy settings patch
 quadlets/                             # Podman quadlet unit files (*.container, *.network)
+  squid.container                     # Egress proxy for agent devcontainers
 devcontainers/                        # Per-project devcontainer templates (see below)
-  dotnet/
-    devcontainer.json                 # .NET agent sandbox: build config, firewall capabilities, mounts
-    Dockerfile                        # .NET SDK 8.0 image, non-root "agent" user, Claude/Kimi installed
-    init-firewall.sh                  # Default-deny egress firewall (iptables/ipset), run per container
-  flutter/
-    devcontainer.json                 # Flutter agent sandbox: build config, firewall capabilities, mounts
-    Dockerfile                        # Ubuntu + Dart/Flutter SDK (stable, no Android SDK), Claude/Kimi installed
-    init-firewall.sh                  # Default-deny egress firewall, allowlists pub.dev + storage.googleapis.com
-  cpp/
-    devcontainer.json                 # C/C++ agent sandbox: build config, firewall capabilities, mounts
-    Dockerfile                        # Debian + gcc/clang/cmake/gdb/valgrind, non-root "agent" user, Claude/Kimi installed
-    init-firewall.sh                  # Default-deny egress firewall (iptables/ipset), run per container
+  alarmclock/
+    devcontainer.json                 # alarmclock agent sandbox: proxy config, mounts, cron start
+    Dockerfile                        # Ubuntu + Flutter/Dart + PlatformIO + uv, non-root "ubuntu" user
+    cronjobs                          # Ubuntu user crontab baked into the image
+    cronscripts/                      # Scripts referenced by cronjobs
+  anothertradingplatform/
+    devcontainer.json                 # .NET agent sandbox: proxy config, mounts, cron start
+    Dockerfile                        # .NET SDK 10.0 image, non-root "ubuntu" user
+    cronjobs                          # Ubuntu user crontab baked into the image
+    cronscripts/                      # Scripts referenced by cronjobs
 systemd/
   home-media.target                   # systemd target: groups all container services
   srv-media.mount                     # systemd unit: mount external drive
@@ -51,10 +53,10 @@ deploy/
   deploy.py                           # Main deploy entry point — includes all tasks
   tasks/
     system.py                         # Install packages, create /srv/containers dirs
-    config.py                         # Upload dashy conf.yml, qbit init, .env
+    config.py                         # Upload dashy conf.yml, squid.conf, qbit init, .env
     quadlets.py                       # Upload quadlet files to /etc/containers/systemd/
     devcontainers.py                  # Upload devcontainers/ templates (recursive) to REMOTE_DIR
-    systemd.py                        # Upload systemd units (MEDIA_UUID substituted), daemon-reload, enable services
+    systemd.py                        # Upload systemd units (${MEDIA_UUID}/${REMOTE_DIR} substituted), daemon-reload, enable services
     firewall.py                       # Open required ports in firewalld (public zone: 6881, 8096, admin UIs)
     arr_setup.py                      # One-time API wiring (*arr + qBittorrent) — run separately
 ```
@@ -76,7 +78,7 @@ All pyinfra commands must be run via `uv run` so that the project's virtual envi
 (including `pyinfra` and `python-dotenv`) is used and `.env` is loaded automatically.
 
 ```bash
-# Full deploy: packages + config + quadlets + systemd units + firewall
+# Full deploy: packages + config + quadlets + devcontainers + systemd units + firewall
 uv run pyinfra deploy/inventory.py deploy/deploy.py
 
 # Deploy only a specific task (e.g. after editing config files):
@@ -124,34 +126,49 @@ There is no compiled code, no test framework, and no linter. Validation is manua
 
 Uses the [Dev Container spec](https://containers.dev/) instead of a hand-rolled quadlet stack —
 each project gets its own container, built from a template in `devcontainers/`, with only the
-toolchain that project needs.
+toolchain that project needs. Outbound access is routed through a single Squid egress proxy
+running as a Podman quadlet.
 
 ### How it works
 
 - `devcontainers/<stack>/` holds a reusable template (`devcontainer.json` + `Dockerfile` +
-  `init-firewall.sh`) — not tied to any one project repo.
+  `cronjobs`/`cronscripts/` where applicable) — not tied to any one project repo.
 - Templates are **not** copied into each project. [devpod](https://github.com/loft-sh/devpod)'s
-  `--devcontainer-path` flag points at the template directly, so `devcontainers/dotnet/` can be
-  reused for every .NET repo under `/srv/repos` without modification.
-- Each container runs as a non-root `agent` user (uid/gid 1000), mounts the target repo (via the
-  CLI's normal workspace mount, at `/workspaces/<repo-name>`), and enforces a default-deny egress
-  firewall (iptables/ipset, adapted from
-  [Anthropic's reference devcontainer](https://github.com/anthropics/claude-code/blob/main/.devcontainer/init-firewall.sh))
-  instead of a shared proxy container — allowlisting only GitHub, the Claude/Kimi APIs, and
-  whatever package registry the stack needs (NuGet for .NET, etc).
+  `--devcontainer-path` flag points at the template directly, so `devcontainers/anothertradingplatform/`
+  can be reused for every .NET repo under `/srv/repos` without modification.
+- Each container runs as a non-root `ubuntu` user (uid/gid 1000), mounts the target repo (via the
+  CLI's normal workspace mount, at `/workspaces/<repo-name>`), and shares the network namespace of
+  a central Squid container (`--network=container:squid`). Egress is filtered by Squid domain ACLs
+  in `config/squid/squid.conf` instead of per-container iptables rules.
+- Sandbox containers set `HTTP_PROXY`/`HTTPS_PROXY` to `http://127.0.0.1:3128`. Because they share
+  Squid's network namespace, `127.0.0.1:3128` resolves to the proxy. Tools that honor these
+  variables (curl, git, gh, dotnet, uv/pip, PlatformIO, pub) route outbound requests through Squid.
+- Git-over-SSH is **not** supported through an HTTP proxy, so each image configures git to prefer
+  HTTPS remotes (`git@github.com:` → `https://github.com/`).
 - Claude Code, Kimi Code, and GitHub CLI (`gh`) auth persist across every project via three fixed
   named volumes (`agent-claude-config`, `agent-kimi-config`, `agent-gh-config`) shared by all
-  templates — log in once, reuse everywhere. `gh` itself is installed from GitHub's own apt repo
-  (not in Debian's default repos); no firewall changes were needed since `api.github.com` /
-  `github.com` were already allowlisted via GitHub's `/meta` IP ranges.
+  templates — log in once, reuse everywhere.
   - `~/.claude.json` (a file, not inside `.claude/`) is symlinked into the `.claude` volume by
     `postCreateCommand` so it persists too — Claude Code writes there directly, not just under
     `.claude/`.
-  - Kimi's volume mounts at `/home/agent/.kimi-code`, matching where its installer actually put
-    the binary/config — not `/home/agent/.kimi`.
+  - Kimi's volume mounts at `/home/ubuntu/.kimi-code`, matching where its installer actually put
+    the binary/config — not `/home/ubuntu/.kimi`.
 - `postCreateCommand` also git-clones `github.com/daniel-brandenburg/.dotfiles` fresh on every
   container creation (not persisted — the repo itself is the source of truth) and symlinks its
   `.agents/skills` into both `~/.claude/skills` and `~/.agents/skills`.
+
+### Egress proxy (`squid`)
+
+- `config/squid/squid.container` is a **rootless user quadlet**. `deploy/tasks/devcontainers.py`
+  installs it into the devcontainer user's `~/.config/containers/systemd/` and enables it as a user
+  service. It runs in the same rootless Podman store as the devpod sandboxes so they can share its
+  network namespace.
+- `config/squid/squid.conf` is the single allowlist. Edit it, run `uv run pyinfra deploy/inventory.py
+  deploy/tasks/config.py`, then restart Squid as the devcontainer user to apply:
+  ```bash
+  systemctl --user restart squid.service
+  ```
+- The proxy listens on `127.0.0.1:3128` inside its network namespace and is not exposed on the host.
 
 ### Prerequisites (one-time, on the server)
 
@@ -159,8 +176,10 @@ toolchain that project needs.
 - devpod CLI — a static Go binary installed to `/usr/local/bin/devpod` by
   `deploy/tasks/devcontainers.py` (pinned version + sha256 in that file). No Node/npm or zypper
   package needed, which sidesteps this host's transactional-server package-install path entirely.
-- The devcontainer templates themselves, synced to `REMOTE_DIR/devcontainers/` by the same task
+- The devcontainer templates and Squid config, synced to `REMOTE_DIR/` by the deploy tasks
   (part of the full deploy, or run standalone — see Deploy above).
+- The `squid` container must be running before any devcontainer starts (it is started by
+  `home-media.target`).
 
 ### Spinning up a project
 
@@ -178,13 +197,16 @@ starts a local port-forward and idles waiting for someone to open it, then times
 just `devpod ssh` in directly regardless:
 
 ```bash
-devpod up /srv/repos/<your-dotnet-project> \
+# Make sure the proxy is running first (as the devcontainer user)
+systemctl --user status squid.service
+
+devpod up /srv/repos/<your-project> \
   --provider docker \
-  --devcontainer-path ../../containers/devcontainers/dotnet/devcontainer.json \
+  --devcontainer-path ../../containers/devcontainers/<stack>/devcontainer.json \
   --ide none
 
 # then attach:
-devpod ssh /srv/repos/<your-dotnet-project>
+devpod ssh /srv/repos/<your-project>
 ```
 
 Devpod's `docker` provider shells out to whatever's on `$PATH` named `docker`/`podman`-compatible;
@@ -198,18 +220,25 @@ on another device) or `gh auth login --with-token < token-file` with a PAT.
 
 ### Caveats
 
-- **Kimi Code's runtime API domain(s) are unconfirmed** in `init-firewall.sh` — only its installer
-  host (`code.kimi.com`) is verified. Watch for connection failures after login and add whatever
+- **Kimi Code's runtime API domain(s) are unconfirmed** in `squid.conf` — only its installer host
+  (`code.kimi.com`) is verified. Watch for connection failures after first login and add whatever
   domain the CLI actually talks to.
 - **The `up`/`exec` commands above are untested against this repo's actual Podman version** — the
   Dev Container CLI's Podman support (`--docker-path podman`) is less exercised than its Docker
   path; verify `up` succeeds before relying on it.
-- `dotnet/`, `flutter/`, and `cpp/` templates exist. The `flutter/` template deliberately omits
-  the Android SDK/Gradle — that toolchain pulls from Google Maven, the Gradle plugin portal, and
-  `dl.google.com`, which is a much wider (and harder to keep tight) runtime firewall allowlist than
-  this default-deny setup aims for. It covers `flutter analyze`/`test`/`build web`/`build linux`,
-  not `flutter build apk`/`appbundle`. An Android-SDK variant is still to do if mobile builds are
-  needed.
+- **Proxy enforcement relies on applications honoring `HTTP_PROXY`/`HTTPS_PROXY`.** Direct outbound
+  from a sandbox container is not blocked at the network level because rootless Podman cannot
+  easily apply egress rules to a shared namespace on a per-process basis. Keep this in mind if the
+  sandbox runs untrusted code.
+- **Git-over-SSH is disabled.** Use HTTPS remotes; the images configure git to rewrite
+  `git@github.com:` automatically.
+- The `anothertradingplatform/` and `alarmclock/` templates additionally bake **cron jobs into the container**:
+  their Dockerfiles install `cron`, COPY `cronscripts/` + the `cronjobs` crontab into the image,
+  install them as the `ubuntu` user's crontab (`crontab -u ubuntu`), and `postStartCommand`
+  starts the daemon (`sudo service cron start`). Logs land in `/home/ubuntu/cronlogs/`.
+  Editing `cronjobs`/`cronscripts/` requires an image rebuild (`devpod up --recreate`) to take
+  effect — and **jobs only fire while the container is running**, so a stopped sandbox silently
+  skips its schedule.
 
 ---
 
@@ -220,6 +249,7 @@ on another device) or `gh auth login --with-token < token-file` with a PAT.
 | Dashy        | `ghcr.io/lissy93/dashy:latest`         | 8081          | `dash.home`           |
 | Prowlarr     | `lscr.io/linuxserver/prowlarr:latest`  | 9696          | `prowlarr.home`       |
 | FlareSolverr | `ghcr.io/flaresolverr/flaresolverr:latest` | 8191      | (internal only)       |
+| Squid        | `docker.io/ubuntu/squid:6.6-24.04_edge`| 3128          | (rootless, internal)  |
 | Jellyfin     | `lscr.io/linuxserver/jellyfin:latest`  | 8096          | `jellyfin.home`       |
 | Audiobookshelf | `ghcr.io/advplyr/audiobookshelf:latest` | 13378       | `audiobooks.home`     |
 | qBittorrent  | `lscr.io/linuxserver/qbittorrent:latest` | 8080        | `qbit.home`           |
