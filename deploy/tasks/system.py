@@ -2,7 +2,9 @@
 tasks/system.py — host package installation and directory scaffolding
 
 Ensures the server has the required packages installed and that all
-/srv/containers/<service> config directories exist with the right ownership.
+/srv/containers/<service> config directories exist with the right ownership,
+plus the handful of container data directories that deliberately live outside
+/srv (see _config_dirs).
 """
 
 import os
@@ -62,19 +64,12 @@ PGID = int(os.environ.get("PGID", 1000))
 # config for rootful quadlets that run as exactly PUID:PGID — no other host
 # UID needs access.
 #
-# squid/ is the one exception: squid.conf is bind-mounted into the *rootless*
-# devcontainer-user quadlet (see deploy/tasks/devcontainers.py). A rootless
-# container's UID — even UID 0 (root) inside it — is remapped by the kernel to
-# a subordinate UID from the devcontainer user's /etc/subuid range, which is
-# neither PUID nor PGID. "750" leaves that remapped UID with no access at all,
-# so Squid's control process can't open its config and the unit fails to
-# start. squid.conf itself is non-secret (just proxy ACLs), so the fix is to
-# make the whole path down to it world-readable/traversable rather than
-# chasing exact subuid numbers.
+# REMOTE_DIR itself is "751" (o+x, no listing): the devcontainer user (rootless
+# devpod) is a different host UID and must be able to traverse into
+# REMOTE_DIR/devcontainers to read the templates.
 _config_dirs = [
-    (REMOTE_DIR, "751"),  # o+x only (no listing) so subpaths are reachable
+    (REMOTE_DIR, "751"),
     (f"{REMOTE_DIR}/dashy", "750"),
-    (f"{REMOTE_DIR}/squid", "755"),
     (f"{REMOTE_DIR}/qbittorrent/custom-cont-init.d", "750"),
     (f"{REMOTE_DIR}/prowlarr", "750"),
     (f"{REMOTE_DIR}/sonarr", "750"),
@@ -86,6 +81,9 @@ _config_dirs = [
     (f"{REMOTE_DIR}/bitmagnet/postgres", "750"),
     (f"{REMOTE_DIR}/bitmagnet/config", "750"),
     (f"{REMOTE_DIR}/jellyfin", "750"),
+    # Not under REMOTE_DIR: Jellyfin's cache is bind-mounted from /var so that
+    # transcodes cannot fill the small /srv partition (see jellyfin.container).
+    ("/var/lib/jellyfin-cache", "750"),
 ]
 
 for _dir, _mode in _config_dirs:

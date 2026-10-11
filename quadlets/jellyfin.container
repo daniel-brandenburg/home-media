@@ -9,6 +9,12 @@ ContainerName=jellyfin
 EnvironmentFile=/srv/containers/.env
 PublishPort=8096:8096
 Volume=/srv/containers/jellyfin:/config:Z
+# Cache (transcodes + image cache) lives on /var, not /srv. /srv is a 20G
+# partition; a single long transcode session filled it and Jellyfin refused to
+# start afterwards (it requires 2GiB free on its data path at boot).
+# /var is a separate 219G partition, so runaway transcodes can no longer take
+# the server down. Contents are regenerable — safe to delete at any time.
+Volume=/var/lib/jellyfin-cache:/config/cache:Z
 Volume=/srv/media:/data
 # NO :Z on /data (exFAT drive does not support SELinux labels)
 Network=media_net.network

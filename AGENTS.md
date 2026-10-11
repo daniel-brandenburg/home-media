@@ -9,9 +9,7 @@ Deployment is automated with **pyinfra**.
 
 ## Agent Rules
 
-- **Never run commands on the remote server.** Do not `ssh` into the remote host or any other
-  host. Do not execute `podman`, `systemctl`, or any other command remotely. All remote operations
-  are the responsibility of the human operator.
+- **Never run delete commands on the remote server.** Do not delete any files on the remote server without asking first
 - **Never deploy changes without explicit user approval.** Do not run `pyinfra`, do not invoke
   `rsync` to push files, and do not suggest or initiate a deployment unless the user has explicitly
   asked you to deploy in that same conversation turn.
@@ -25,25 +23,25 @@ Deployment is automated with **pyinfra**.
 packages.txt                          # Host system packages required (e.g. rsync)
 config/
   dashy/conf.yml                      # Dashboard layout and service tiles (${SERVER_IP} placeholder)
-  squid/
-    squid.conf                        # Egress proxy ACLs for agent devcontainers
-    squid.container                   # Rootless user quadlet for the Squid proxy
   qbittorrent/
     custom-cont-init.d/
       99-webui-proxy.sh               # qBittorrent WebUI proxy settings patch
 quadlets/                             # Podman quadlet unit files (*.container, *.network)
-  squid.container                     # Egress proxy for agent devcontainers
 devcontainers/                        # Per-project devcontainer templates (see below)
   alarmclock/
-    devcontainer.json                 # alarmclock agent sandbox: proxy config, mounts, cron start
+    devcontainer.json                 # alarmclock agent sandbox: mounts, cron start
     Dockerfile                        # Ubuntu + Flutter/Dart + PlatformIO + uv, non-root "ubuntu" user
     cronjobs                          # Ubuntu user crontab baked into the image
     cronscripts/                      # Scripts referenced by cronjobs
   anothertradingplatform/
-    devcontainer.json                 # .NET agent sandbox: proxy config, mounts, cron start
+    devcontainer.json                 # .NET agent sandbox: mounts, cron start
     Dockerfile                        # .NET SDK 10.0 image, non-root "ubuntu" user
     cronjobs                          # Ubuntu user crontab baked into the image
     cronscripts/                      # Scripts referenced by cronjobs
+  thirdplacepages/
+    devcontainer.json                 # ThirdPlacePages (.NET 10) agent sandbox: mounts, no cron
+    Dockerfile                        # .NET SDK 10.0 + dotnet-ef + gh + claude/kimi, non-root "ubuntu" user
+    README.md                         # How to run it on the server
 systemd/
   home-media.target                   # systemd target: groups all container services
   srv-media.mount                     # systemd unit: mount external drive
@@ -53,7 +51,7 @@ deploy/
   deploy.py                           # Main deploy entry point — includes all tasks
   tasks/
     system.py                         # Install packages, create /srv/containers dirs
-    config.py                         # Upload dashy conf.yml, squid.conf, qbit init, .env
+    config.py                         # Upload dashy conf.yml, qbit init, .env
     quadlets.py                       # Upload quadlet files to /etc/containers/systemd/
     devcontainers.py                  # Upload devcontainers/ templates (recursive) to REMOTE_DIR
     systemd.py                        # Upload systemd units (${MEDIA_UUID}/${REMOTE_DIR} substituted), daemon-reload, enable services
@@ -126,25 +124,23 @@ There is no compiled code, no test framework, and no linter. Validation is manua
 
 Uses the [Dev Container spec](https://containers.dev/) instead of a hand-rolled quadlet stack —
 each project gets its own container, built from a template in `devcontainers/`, with only the
-toolchain that project needs. Outbound access is routed through a single Squid egress proxy
-running as a Podman quadlet.
+toolchain that project needs. Containers have direct, unfiltered outbound access (there is no
+egress proxy).
 
 ### How it works
 
 - `devcontainers/<stack>/` holds a reusable template (`devcontainer.json` + `Dockerfile` +
-  `cronjobs`/`cronscripts/` where applicable) — not tied to any one project repo.
+  `cronjobs`/`cronscripts/` where applicable, and a `README.md` for project-specific run
+  instructions) — not tied to any one project repo.
 - Templates are **not** copied into each project. [devpod](https://github.com/loft-sh/devpod)'s
   `--devcontainer-path` flag points at the template directly, so `devcontainers/anothertradingplatform/`
   can be reused for every .NET repo under `/srv/repos` without modification.
 - Each container runs as a non-root `ubuntu` user (uid/gid 1000), mounts the target repo (via the
-  CLI's normal workspace mount, at `/workspaces/<repo-name>`), and shares the network namespace of
-  a central Squid container (`--network=container:squid`). Egress is filtered by Squid domain ACLs
-  in `config/squid/squid.conf` instead of per-container iptables rules.
-- Sandbox containers set `HTTP_PROXY`/`HTTPS_PROXY` to `http://127.0.0.1:3128`. Because they share
-  Squid's network namespace, `127.0.0.1:3128` resolves to the proxy. Tools that honor these
-  variables (curl, git, gh, dotnet, uv/pip, PlatformIO, pub) route outbound requests through Squid.
-- Git-over-SSH is **not** supported through an HTTP proxy, so each image configures git to prefer
-  HTTPS remotes (`git@github.com:` → `https://github.com/`).
+  CLI's normal workspace mount, at `/workspaces/<repo-name>`), and uses rootless Podman's default
+  network. There is no network-level egress filtering — treat anything the sandbox can reach, and
+  the credentials stored in its shared volumes, accordingly.
+- No SSH keys live in the containers, so each image configures git to prefer HTTPS remotes
+  (`git@github.com:` → `https://github.com/`) and `gh` authenticates over HTTPS.
 - Claude Code, Kimi Code, and GitHub CLI (`gh`) auth persist across every project via three fixed
   named volumes (`agent-claude-config`, `agent-kimi-config`, `agent-gh-config`) shared by all
   templates — log in once, reuse everywhere.
@@ -157,18 +153,19 @@ running as a Podman quadlet.
   container creation (not persisted — the repo itself is the source of truth) and symlinks its
   `.agents/skills` into both `~/.claude/skills` and `~/.agents/skills`.
 
-### Egress proxy (`squid`)
+### Former Squid egress proxy (removed)
 
-- `config/squid/squid.container` is a **rootless user quadlet**. `deploy/tasks/devcontainers.py`
-  installs it into the devcontainer user's `~/.config/containers/systemd/` and enables it as a user
-  service. It runs in the same rootless Podman store as the devpod sandboxes so they can share its
-  network namespace.
-- `config/squid/squid.conf` is the single allowlist. Edit it, run `uv run pyinfra deploy/inventory.py
-  deploy/tasks/config.py`, then restart Squid as the devcontainer user to apply:
-  ```bash
-  systemctl --user restart squid.service
-  ```
-- The proxy listens on `127.0.0.1:3128` inside its network namespace and is not exposed on the host.
+The rootless Squid proxy and its `devcontainer-egress` network were removed. `deploy/tasks/devcontainers.py`
+stops the user service and deletes its quadlets and `REMOTE_DIR/squid` on deploy (idempotent). Podman
+objects are not files, so remove those by hand on the server, as the devpod user:
+
+```bash
+podman network rm systemd-devcontainer-egress
+podman image rm docker.io/ubuntu/squid:6.6-24.04_edge
+```
+
+Existing `alarmclock` / `anothertradingplatform` workspaces were created attached to that network —
+run `devpod up ... --recreate` for each after deploying, before removing the network.
 
 ### Prerequisites (one-time, on the server)
 
@@ -176,10 +173,8 @@ running as a Podman quadlet.
 - devpod CLI — a static Go binary installed to `/usr/local/bin/devpod` by
   `deploy/tasks/devcontainers.py` (pinned version + sha256 in that file). No Node/npm or zypper
   package needed, which sidesteps this host's transactional-server package-install path entirely.
-- The devcontainer templates and Squid config, synced to `REMOTE_DIR/` by the deploy tasks
-  (part of the full deploy, or run standalone — see Deploy above).
-- The `squid` container must be running before any devcontainer starts (it is started by
-  `home-media.target`).
+- The devcontainer templates, synced to `REMOTE_DIR/` by the deploy tasks (part of the full
+  deploy, or run standalone — see Deploy above).
 
 ### Spinning up a project
 
@@ -197,9 +192,6 @@ starts a local port-forward and idles waiting for someone to open it, then times
 just `devpod ssh` in directly regardless:
 
 ```bash
-# Make sure the proxy is running first (as the devcontainer user)
-systemctl --user status squid.service
-
 devpod up /srv/repos/<your-project> \
   --provider docker \
   --devcontainer-path ../../containers/devcontainers/<stack>/devcontainer.json \
@@ -220,16 +212,14 @@ on another device) or `gh auth login --with-token < token-file` with a PAT.
 
 ### Caveats
 
-- **Kimi Code's runtime API domain(s) are unconfirmed** in `squid.conf` — only its installer host
-  (`code.kimi.com`) is verified. Watch for connection failures after first login and add whatever
-  domain the CLI actually talks to.
 - **The `up`/`exec` commands above are untested against this repo's actual Podman version** — the
   Dev Container CLI's Podman support (`--docker-path podman`) is less exercised than its Docker
   path; verify `up` succeeds before relying on it.
-- **Proxy enforcement relies on applications honoring `HTTP_PROXY`/`HTTPS_PROXY`.** Direct outbound
-  from a sandbox container is not blocked at the network level because rootless Podman cannot
-  easily apply egress rules to a shared namespace on a per-process basis. Keep this in mind if the
+- **No egress filtering.** Sandboxes can reach anything the server can. Keep this in mind if the
   sandbox runs untrusted code.
+- **No container engine in the sandboxes.** Projects whose tests use Testcontainers (e.g.
+  ThirdPlacePages) can only run the subset of tests that don't need Docker; see that template's
+  README.
 - **Git-over-SSH is disabled.** Use HTTPS remotes; the images configure git to rewrite
   `git@github.com:` automatically.
 - The `anothertradingplatform/` and `alarmclock/` templates additionally bake **cron jobs into the container**:
@@ -249,7 +239,6 @@ on another device) or `gh auth login --with-token < token-file` with a PAT.
 | Dashy        | `ghcr.io/lissy93/dashy:latest`         | 8081          | `dash.home`           |
 | Prowlarr     | `lscr.io/linuxserver/prowlarr:latest`  | 9696          | `prowlarr.home`       |
 | FlareSolverr | `ghcr.io/flaresolverr/flaresolverr:latest` | 8191      | (internal only)       |
-| Squid        | `docker.io/ubuntu/squid:6.6-24.04_edge`| 3128          | (rootless, internal)  |
 | Jellyfin     | `lscr.io/linuxserver/jellyfin:latest`  | 8096          | `jellyfin.home`       |
 | Audiobookshelf | `ghcr.io/advplyr/audiobookshelf:latest` | 13378       | `audiobooks.home`     |
 | qBittorrent  | `lscr.io/linuxserver/qbittorrent:latest` | 8080        | `qbit.home`           |
@@ -302,6 +291,19 @@ All files under `deploy/` follow these conventions:
 - Add `:Z` to volume mounts on SELinux-enabled hosts so Podman relabels files for container access.
 - **Do NOT add `:Z`** for volumes on exFAT filesystems — exFAT does not support SELinux labels.
   Comment the reason inline in the quadlet file.
+
+### Partition layout — keep bulk data off `/srv`
+
+The server splits its NVMe into a **20G `/srv`** (nvme0n1p2) and a **219G `/var`** (nvme0n1p3).
+`/srv/containers/<service>` is for *config* only. Anything that grows without bound — transcode
+scratch, caches, generated artifacts — must be bind-mounted from `/var`, or it will fill `/srv` and
+take services down with it.
+
+Jellyfin is the worked example: its cache mounts from `/var/lib/jellyfin-cache`. Before that change,
+a single transcode session left 4.8G of orphaned segments in `/srv`, and Jellyfin (10.11+ requires
+2GiB free on its data path at startup) then crash-looped for two days, unable to reach the cleanup
+task that would have freed the space. When adding a service, ask which of its directories has no
+upper bound and mount that one from `/var`.
 
 ### LinuxServer.io images
 

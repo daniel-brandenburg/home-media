@@ -5,10 +5,8 @@
 # own Python 3.13 for scripts/ (ubuntu:24.04 ships 3.12, scripts/ needs
 # >=3.13).
 #
-# Dart/Flutter SDK only — no Android SDK/Gradle/emulator. That toolchain
-# pulls from Google Maven, the Gradle plugin portal, and dl.google.com,
-# which is a much wider (and harder to keep tight) egress proxy
-# allowlist than this setup aims for. This template covers
+# Dart/Flutter SDK only — no Android SDK/Gradle/emulator (a large download
+# that this template doesn't need). This template covers
 # `flutter analyze` / `flutter test` / `flutter build web` / `flutter build
 # linux` — not `flutter build apk`/`appbundle`. Add Android SDK support as
 # its own variant if mobile builds are needed.
@@ -37,6 +35,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 \
         python3-venv \
         pipx \
+        jq \
         tmux \
         cron \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
@@ -52,7 +51,7 @@ RUN mkdir -p -m 755 /etc/apt/keyrings \
 
 # The ubuntu user (UID/GID 1000) already exists in the ubuntu:24.04 base image
 # and matches the server's default host user.
-# Git-over-SSH is not allowed through the egress proxy; prefer HTTPS remotes.
+# No SSH keys in the container (gh authenticates over HTTPS); prefer HTTPS remotes.
 RUN git config --global url."https://github.com/".insteadOf "git@github.com:" \
     && git config --global url."https://".insteadOf "git@"
 
@@ -74,14 +73,13 @@ USER ubuntu
 ENV HOME=/home/ubuntu
 RUN git clone --depth 1 -b stable https://github.com/flutter/flutter.git /home/ubuntu/flutter
 ENV PATH="/home/ubuntu/flutter/bin:/home/ubuntu/.local/bin:${PATH}"
-# Pre-fetch Dart/Flutter tool artifacts at build time (network is open here,
-# unlike at container runtime once the egress proxy is in use) so the first
-# `flutter` invocation inside the container doesn't need storage.googleapis.com.
+# Pre-fetch Dart/Flutter tool artifacts at build time so the first `flutter`
+# invocation inside the container doesn't have to download them.
 RUN flutter precache --linux --no-android --no-ios && flutter doctor
 # PlatformIO for firmware/ (ESP32). Pre-fetch the espressif32 platform,
 # xtensa toolchain, and Arduino framework at build time by compiling a
-# throwaway project — the egress proxy would block those downloads.
-# Project lib_deps are still resolved at runtime (registry is allowlisted).
+# throwaway project, so they are cached in the image rather than downloaded on
+# first use. Project lib_deps are still resolved at runtime.
 RUN pipx install platformio \
     && mkdir -p /tmp/pio-warm/src \
     && printf '[env:esp32dev]\nplatform = espressif32\nboard = esp32dev\nframework = arduino\nboard_build.filesystem = littlefs\n' > /tmp/pio-warm/platformio.ini \
@@ -89,7 +87,7 @@ RUN pipx install platformio \
     && pio run -d /tmp/pio-warm \
     && rm -rf /tmp/pio-warm
 # uv for scripts/ (requires Python >= 3.13; uv installs its own). Python 3.13
-# is pre-fetched at build time for the same egress-proxy reason as above.
+# is pre-fetched at build time for the same reason as above.
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && uv python install 3.13
 RUN curl -fsSL https://claude.ai/install.sh | bash

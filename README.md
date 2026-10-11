@@ -142,6 +142,38 @@ journalctl -u sonarr.service -f
 systemctl restart caddy.service
 ```
 
+### Pull a media file off the server
+
+Container paths (`/data/TV`, `/data/Movies`, `/data/downloads`) map to `/srv/media/...`
+on the host, so use the **host** path when copying over SSH:
+
+```bash
+# Copy one episode to your local ~/Downloads
+rsync -a --info=progress2 \
+  "db@192.168.0.50:/srv/media/TV/Game Changer/Season 8/Game Changer - S08E07 - Earwigs WEBDL-1080p.mkv" \
+  ~/Downloads/
+
+# Copy a whole season
+rsync -a --info=progress2 \
+  "db@192.168.0.50:/srv/media/TV/Game Changer/Season 8/" \
+  ~/Downloads/"Game Changer S08"/
+```
+
+Quote the remote path — media names contain spaces.  `rsync` resumes safely on re-run;
+use `scp` only if `rsync` is not installed on the server.
+
+### Agent devcontainers
+
+Per-project sandboxes for running Claude Code / Kimi Code on the server live in `devcontainers/`
+(see "Coding Agent Sandbox" in [AGENTS.md](AGENTS.md)). Deploy the templates with
+`uv run pyinfra deploy/inventory.py deploy/tasks/devcontainers.py`. To run the ThirdPlacePages
+sandbox, follow [devcontainers/thirdplacepages/README.md](devcontainers/thirdplacepages/README.md).
+
+### When something is broken
+
+See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — diagnostic procedure, access gotchas
+(rootful containers, unreadable journal), and the incident log.
+
 ## Design Notes
 
 **Quadlets** — Each container is defined as a Podman quadlet unit file in `quadlets/`.

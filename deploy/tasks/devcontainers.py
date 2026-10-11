@@ -8,9 +8,9 @@ REMOTE_DIR/devcontainers/ on the server, preserving the directory structure.
 Each template's devcontainer.json, Dockerfile, and any supporting files stay
 colocated.
 
-Also installs the rootless Squid egress-proxy quadlet into the devcontainer
-user's ~/.config/containers/systemd/ and enables it as a user service, so
-Squid runs in the same Podman store as the devpod-managed sandboxes.
+Also retires the former Squid egress proxy: the sandboxes now have direct
+outbound access, so the rootless Squid user service, its quadlets and its
+config directory are removed from the server if present (idempotent).
 
 These are not project repos — they're reusable templates referenced via
 devpod's --devcontainer-path flag against whichever repo under /srv/repos
@@ -61,61 +61,55 @@ for _dirpath, _dirnames, _filenames in os.walk(_devcontainers_dir):
             mode="644",
         )
 
-# ── Rootless Squid egress proxy quadlet ────────────────────────────────────────
-# devpod runs rootless Podman as _devcontainer_user. The Squid container must
-# live in that user's Podman store so devcontainers can reach it as a peer on
-# the shared devcontainer-egress bridge network (see config/squid/squid.container
-# for why this uses a shared network rather than --network=container:squid).
-files.directory(
-    name=f"Ensure rootless quadlet dir exists for {_devcontainer_user}",
-    path=_user_systemd_containers,
-    present=True,
-    user=_devcontainer_user,
-    group=_devcontainer_user,
-    mode="700",
-)
-
-files.put(
-    name="Upload rootless Squid egress proxy quadlet",
-    src=os.path.join(_repo_root, "config", "squid", "squid.container"),
-    dest=f"{_user_systemd_containers}/squid.container",
-    mode="644",
-    user=_devcontainer_user,
-    group=_devcontainer_user,
-)
-
-files.put(
-    name="Upload rootless devcontainer egress network quadlet",
-    src=os.path.join(_repo_root, "config", "squid", "devcontainer-egress.network"),
-    dest=f"{_user_systemd_containers}/devcontainer-egress.network",
-    mode="644",
-    user=_devcontainer_user,
-    group=_devcontainer_user,
-)
-
-# Allow the user service to survive logout / start at boot.
+# ── Retire the Squid egress proxy ──────────────────────────────────────────────
+# Squid used to run here as a rootless user quadlet, with devcontainers joining
+# its devcontainer-egress bridge network. It has been removed; everything it
+# left on disk is cleaned up below. Podman objects (the systemd-devcontainer-egress
+# network and the squid image) are not files — remove those by hand, see
+# devcontainers/thirdplacepages/README.md.
+#
+# Stop the service first (the unit may not exist on a fresh host), then remove
+# the quadlets so the next daemon-reload drops the generated units.
 server.shell(
-    name=f"Enable linger for {_devcontainer_user}",
-    commands=[f"loginctl enable-linger {_devcontainer_user}"],
+    name="Stop the retired Squid user service",
+    commands=[
+        f"systemctl --user --machine={_devcontainer_user}@.host stop squid.service || true",
+    ],
 )
 
-# The quadlet file's [Install] WantedBy=default.target is honored by the
-# quadlet generator itself — it creates the default.target.wants symlink in
-# its generator output at daemon-reload time. Do NOT hand-create that symlink
-# pointing at the .container file: the .container file is not a valid service
-# unit, and if it ever shadows the generated unit, `start` fails.
-# Remove the hand-made symlink left behind by earlier versions of this task.
+files.file(
+    name="Remove retired Squid quadlet",
+    path=f"{_user_systemd_containers}/squid.container",
+    present=False,
+)
+
+files.file(
+    name="Remove retired devcontainer egress network quadlet",
+    path=f"{_user_systemd_containers}/devcontainer-egress.network",
+    present=False,
+)
+
+files.directory(
+    name="Remove retired Squid config directory",
+    path=f"{REMOTE_DIR}/squid",
+    present=False,
+)
+
+# Hand-made symlink left behind by even earlier versions of the Squid task.
 files.link(
     name="Remove legacy hand-made squid.service symlink",
     path=f"{_home_dir}/.config/systemd/user/default.target.wants/squid.service",
     present=False,
 )
+
+# Keep the devcontainer user's rootless Podman containers (and any tmux
+# sessions inside them) alive after logout.
 server.shell(
-    name="Reload user systemd and (re)start Squid",
-    commands=[
-        f"systemctl --user --machine={_devcontainer_user}@.host daemon-reload",
-        # restart (not start) so redeploys pick up quadlet/config changes;
-        # on an inactive unit, restart behaves like start.
-        f"systemctl --user --machine={_devcontainer_user}@.host restart squid.service",
-    ],
+    name=f"Enable linger for {_devcontainer_user}",
+    commands=[f"loginctl enable-linger {_devcontainer_user}"],
+)
+
+server.shell(
+    name="Reload user systemd",
+    commands=[f"systemctl --user --machine={_devcontainer_user}@.host daemon-reload"],
 )

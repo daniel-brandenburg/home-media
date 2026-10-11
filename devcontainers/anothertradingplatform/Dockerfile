@@ -11,6 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         sudo \
         unzip \
         build-essential \
+        python3 \
+        jq \
         tmux \
         cron \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
@@ -25,7 +27,7 @@ RUN mkdir -p -m 755 /etc/apt/keyrings \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Git-over-SSH is not allowed through the egress proxy; prefer HTTPS remotes.
+# No SSH keys in the container (gh authenticates over HTTPS); prefer HTTPS remotes.
 RUN git config --global url."https://github.com/".insteadOf "git@github.com:" \
     && git config --global url."https://".insteadOf "git@"
 
