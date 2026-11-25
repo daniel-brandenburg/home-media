@@ -13,12 +13,13 @@
   "mounts": [
     "source=agent-claude-config,target=/home/ubuntu/.claude,type=volume",
     "source=agent-kimi-config,target=/home/ubuntu/.kimi-code,type=volume",
-    "source=agent-gh-config,target=/home/ubuntu/.config/gh,type=volume"
+    "source=agent-gh-config,target=/home/ubuntu/.config/gh,type=volume",
+    "source=/srv/containers/claude-config,target=/opt/claude-config,type=bind,readonly"
   ],
   "containerEnv": {
     "DOTNET_CLI_TELEMETRY_OPTOUT": "1"
   },
-  "postCreateCommand": "mkdir -p /home/ubuntu/.claude && ([ -e /home/ubuntu/.claude.json ] && [ ! -L /home/ubuntu/.claude.json ] && mv /home/ubuntu/.claude.json /home/ubuntu/.claude/.claude.json || true) && ln -sf /home/ubuntu/.claude/.claude.json /home/ubuntu/.claude.json && git config --global url.\"https://github.com/\".insteadOf \"git@github.com:\" && git config --global url.\"https://\".insteadOf \"git@\" && git clone --depth 1 https://github.com/daniel-brandenburg/.dotfiles.git /home/ubuntu/.dotfiles && mkdir -p /home/ubuntu/.agents && ln -sfn /home/ubuntu/.dotfiles/.agents/skills /home/ubuntu/.claude/skills && ln -sfn /home/ubuntu/.dotfiles/.agents/skills /home/ubuntu/.agents/skills",
+  "postCreateCommand": "bash /opt/claude-config/setup.sh",
   "postStartCommand": "sudo /usr/sbin/service cron start",
   "waitFor": "postStartCommand"
 }

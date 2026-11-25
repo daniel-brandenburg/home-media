@@ -1,0 +1,7 @@
+# Everything here except the two scripts is a symlink into ~/.claude (created by
+# link.sh). Never commit it: settings and CLAUDE.md are personal, and skills/agents
+# are tracked in the dotfiles repo.
+*
+!.gitignore
+!link.sh
+!setup.sh

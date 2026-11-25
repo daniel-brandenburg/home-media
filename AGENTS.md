@@ -21,6 +21,9 @@ Deployment is automated with **pyinfra**.
 ```
 .env.example                          # Environment variable template — copy to .env
 packages.txt                          # Host system packages required (e.g. rsync)
+claude-config/                        # Operator's ~/.claude (CLAUDE.md, settings, rules, agents, skills) for the sandboxes
+  link.sh                             # Creates the git-ignored symlinks into ~/.claude
+  setup.sh                            # Runs in each sandbox as postCreateCommand (shared by all templates)
 config/
   dashy/conf.yml                      # Dashboard layout and service tiles (${SERVER_IP} placeholder)
   qbittorrent/
@@ -149,9 +152,23 @@ egress proxy).
     `.claude/`.
   - Kimi's volume mounts at `/home/ubuntu/.kimi-code`, matching where its installer actually put
     the binary/config — not `/home/ubuntu/.kimi`.
-- `postCreateCommand` also git-clones `github.com/daniel-brandenburg/.dotfiles` fresh on every
-  container creation (not persisted — the repo itself is the source of truth) and symlinks its
-  `.agents/skills` into both `~/.claude/skills` and `~/.agents/skills`.
+- The operator's Claude config comes from `claude-config/` (not from git):
+  - `claude-config/link.sh` creates git-ignored symlinks to `~/.claude/{CLAUDE.md,settings.json,
+    statusline.sh,rules,agents,skills}` (skills/agents themselves live in the dotfiles repo, which
+    `~/.claude` links into). Run it once on the developer machine.
+  - `deploy/tasks/devcontainers.py` follows those symlinks and uploads real files to
+    `REMOTE_DIR/claude-config/` (no remote deletes — remove stale files by hand).
+  - Every template bind-mounts that directory read-only at `/opt/claude-config`
+    (`source=/srv/containers/claude-config`, hardcoded to the default `REMOTE_DIR`) and runs
+    `bash /opt/claude-config/setup.sh` as `postCreateCommand`. That script links `skills`, `agents`,
+    `rules` and `CLAUDE.md` into `~/.claude` (live: a redeploy updates them) and *copies*
+    `settings.json` and `statusline.sh` (rewriting the `/home/<user>/.claude/` path to the container's
+    home) — so settings changes need `bash /opt/claude-config/setup.sh` inside the container, or
+    `--recreate`. It also sets the git HTTPS rewrite and `gh` credential helper.
+  - MCP servers (kept in `~/.claude.json`) are **not** copied, so `mcp__*` permissions and rules that
+    assume e.g. Context7 do nothing in the sandbox.
+  - Images install the `codegraph` CLI (pinned `CODEGRAPH_VERSION` build arg) because the copied
+    `settings.json` runs `codegraph prompt-hook` on every prompt.
 
 ### Former Squid egress proxy (removed)
 
@@ -304,6 +321,31 @@ a single transcode session left 4.8G of orphaned segments in `/srv`, and Jellyfi
 2GiB free on its data path at startup) then crash-looped for two days, unable to reach the cleanup
 task that would have freed the space. When adding a service, ask which of its directories has no
 upper bound and mount that one from `/var`.
+
+The same applies to the devpod sandboxes: `/home` is on the 20G partition too, so rootless
+Podman's default graphroot filled it (one ThirdPlacePages sandbox had a 7G layer plus a 3.7G
+volume). The devpod user's graphroot is therefore on `/var`. This is host configuration, not
+managed by pyinfra. On a rebuilt server, do it once before the first `devpod up`:
+
+```bash
+# as root
+install -d -m 700 -o db -g db /var/lib/podman-db
+# SELinux: label it like the default storage path (needs policycoreutils-python-utils)
+semanage fcontext -a -e /home/db/.local/share/containers /var/lib/podman-db
+restorecon -v /var/lib/podman-db        # non-recursive on purpose
+
+# as db
+mkdir -p ~/.config/containers
+printf '[storage]\ndriver = "overlay"\ngraphroot = "/var/lib/podman-db/storage"\n' \
+  > ~/.config/containers/storage.conf
+podman info --format '{{.Store.GraphRoot}}'   # must print the new path
+```
+
+Moving an existing install is not a file copy: Podman's sqlite state records absolute paths, so a
+copied graphroot is rejected. `podman volume export`/`import` the named volumes instead, then
+`devpod up ... --recreate` each workspace (only caches are lost). Btrfs shares extents between
+Podman layers, so deleting data can free far less than `du` reports; check
+`sudo btrfs filesystem usage /`.
 
 ### LinuxServer.io images
 

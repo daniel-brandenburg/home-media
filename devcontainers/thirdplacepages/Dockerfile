@@ -10,7 +10,7 @@
 #
 # Flutter is intentionally absent (being replaced by KMP). Add a JDK/Android
 # SDK layer when src/Native exists.
-FROM mcr.microsoft.com/dotnet/sdk:10.0
+FROM mcr.microsoft.com/dotnet/sdk:11.0
 
 ARG TZ=Etc/UTC
 ENV TZ="$TZ"
@@ -28,6 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         jq \
         sqlite3 \
         tmux \
+        vim \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # GitHub CLI — not in Debian's default repos, installed from GitHub's own apt
@@ -63,5 +64,10 @@ RUN dotnet tool install --global dotnet-ef --version 10.0.11
 
 RUN curl -fsSL https://claude.ai/install.sh | bash
 RUN curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash
+
+# CodeGraph CLI: the global settings.json runs `codegraph prompt-hook` on every prompt.
+# Pinned to the operator's version; bump deliberately.
+ARG CODEGRAPH_VERSION=v1.6.0
+RUN curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | CODEGRAPH_VERSION="$CODEGRAPH_VERSION" sh
 
 WORKDIR /workspaces

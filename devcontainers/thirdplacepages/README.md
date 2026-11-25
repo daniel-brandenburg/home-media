@@ -39,10 +39,13 @@ All of this runs on the server (`ssh db@<server>`) unless noted.
 1. **Deploy the template** (from your laptop, in the home-media repo):
 
    ```bash
+   claude-config/link.sh        # once: symlinks your ~/.claude config into claude-config/
    uv run pyinfra deploy/inventory.py deploy/tasks/devcontainers.py
    ```
 
-   This puts the template at `/srv/containers/devcontainers/thirdplacepages/`.
+   This puts the template at `/srv/containers/devcontainers/thirdplacepages/` and your Claude
+   config at `/srv/containers/claude-config/`. The container mounts the latter, so deploy first:
+   container creation fails if that directory is missing.
 
 2. **Point devpod at Podman** (once per server user):
 
@@ -109,6 +112,23 @@ access `ThirdPlacePages/thirdplacepages`.
 `git push` over HTTPS uses `gh` as its credential helper; the template configures that
 automatically.
 
+### Your Claude config
+
+Your laptop's `~/.claude` `CLAUDE.md`, `settings.json`, `statusline.sh`, `rules/`, `agents/` and
+`skills/` are available in every sandbox (mounted read-only at `/opt/claude-config` and linked
+or copied into `~/.claude` when the container is created). To update them: edit locally, redeploy
+(`devcontainers.py` task), then:
+
+- `skills`, `agents`, `rules`, `CLAUDE.md` update immediately (they are links).
+- `settings.json` and `statusline.sh` are copies: run `bash /opt/claude-config/setup.sh` in the
+  container, or recreate it.
+
+Not carried over: MCP servers (they live in `~/.claude.json`), plugins' installed files (plugins in
+`enabledPlugins` are fetched by Claude Code on first start), history, and credentials. Files you
+delete locally stay on the server until you remove them from `/srv/containers/claude-config`.
+Note that your global `CLAUDE.md` applies to headless `claude -p` runs too, including its
+"ask clarifying questions before non-trivial work" rule.
+
 ### Keep Claude running after you disconnect
 
 Closing the SSH session kills foreground processes. Run Claude inside tmux:
@@ -143,7 +163,7 @@ uv run pyinfra deploy/inventory.py deploy/tasks/devcontainers.py
 
 What survives `--recreate`: the three login volumes and the `thirdplacepages-worktrees` volume.
 What doesn't: everything else in the container, including the NuGet cache, tmux sessions and
-the cloned dotfiles (those are re-cloned on every create).
+the copied `settings.json` (re-copied from `/opt/claude-config` on every create).
 
 ### Worktrees
 

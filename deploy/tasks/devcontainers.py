@@ -12,6 +12,14 @@ Also retires the former Squid egress proxy: the sandboxes now have direct
 outbound access, so the rootless Squid user service, its quadlets and its
 config directory are removed from the server if present (idempotent).
 
+Also uploads claude-config/ (symlinks into the operator's ~/.claude, created
+by claude-config/link.sh and git-ignored) to REMOTE_DIR/claude-config/. Symlinks
+are followed, so the server gets real files. Every devcontainer bind-mounts that
+directory read-only at /opt/claude-config and runs its setup.sh as postCreateCommand
+to install the Claude settings, CLAUDE.md, rules, agents and skills. Files removed
+locally are NOT deleted from the server (this repo never deletes remotely without
+asking); remove stale ones from REMOTE_DIR/claude-config by hand.
+
 These are not project repos — they're reusable templates referenced via
 devpod's --devcontainer-path flag against whichever repo under /srv/repos
 you're working on (see AGENTS.md).
@@ -59,6 +67,40 @@ for _dirpath, _dirnames, _filenames in os.walk(_devcontainers_dir):
             src=_src,
             dest=f"{_remote_devcontainers}/{_rel}",
             mode="644",
+        )
+
+# ── Claude config shared by all agent sandboxes ───────────────────────────────
+# The directory must exist on the server even if nothing was linked locally, or
+# the sandboxes' bind mount (source must exist) would make container creation fail.
+_claude_config_dir = os.path.join(_repo_root, "claude-config")
+_remote_claude_config = f"{REMOTE_DIR}/claude-config"
+
+files.directory(
+    name="Ensure claude-config directory exists",
+    path=_remote_claude_config,
+    present=True,
+    mode="755",
+)
+
+# link.sh only exists to build the symlinks locally; .gitignore is repo plumbing.
+_claude_config_skip = {".gitignore", "link.sh"}
+
+# followlinks=True: top-level entries are symlinks (some to directories) into ~/.claude.
+for _dirpath, _dirnames, _filenames in os.walk(_claude_config_dir, followlinks=True):
+    _dirnames.sort()
+    for _filename in sorted(_filenames):
+        _src = os.path.join(_dirpath, _filename)
+        _rel = os.path.relpath(_src, _claude_config_dir)
+        if _rel in _claude_config_skip or not os.path.exists(_src):
+            continue  # skip plumbing and dangling symlinks
+
+        files.put(
+            name=f"Upload claude-config file: {_rel}",
+            src=_src,
+            dest=f"{_remote_claude_config}/{_rel}",
+            # Keep the executable bit, and make everything world-readable: the
+            # files are root-owned on the server but read by the rootless user.
+            mode=format(os.stat(_src).st_mode & 0o777 | 0o444, "o"),
         )
 
 # ── Retire the Squid egress proxy ──────────────────────────────────────────────

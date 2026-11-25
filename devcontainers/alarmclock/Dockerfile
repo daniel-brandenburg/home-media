@@ -93,4 +93,9 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
 RUN curl -fsSL https://claude.ai/install.sh | bash
 RUN curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash
 
+# CodeGraph CLI: the global settings.json runs `codegraph prompt-hook` on every prompt.
+# Pinned to the operator's version; bump deliberately.
+ARG CODEGRAPH_VERSION=v1.6.0
+RUN curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | CODEGRAPH_VERSION="$CODEGRAPH_VERSION" sh
+
 WORKDIR /workspaces
